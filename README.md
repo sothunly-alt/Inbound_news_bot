@@ -1,13 +1,14 @@
 # Inbound News Bot
 
-Auto-generated news bot that fetches tech + crypto headlines, rewrites them with AI (facts only, no advice/opinions), and broadcasts them to Telegram. Runs on a schedule (5 AM / 5 PM Phnom Penh time) or on manual trigger. This is v1 of the pipeline — Telegram first, website sync comes later.
+Auto-generated news bot that fetches tech + crypto headlines from multiple trusted RSS sources, clusters related stories, rewrites them with AI into a fixed Telegram format (facts only, no advice/opinions), and broadcasts digests to subscribers. Scheduled digests at 5 AM / 5 PM Phnom Penh time; urgent alerts send immediately. Telegram first — website sync comes later.
 
 ## How it works
 
-1. **Fetch** — pulls the latest items from a list of RSS feeds (tech news + crypto)
-2. **Rewrite** — sends each headline/summary to Groq's API (free tier, Llama 3.3 70B) to rewrite as a short, factual Telegram post. No opinions, no "buy/sell" language — just what happened.
-3. **Broadcast** — sends the post to everyone who has subscribed via `/start`
-4. **Dedup** — keeps a local log of what's already been posted so nothing repeats
+1. **Fetch** — pulls the latest items from multiple trusted RSS feeds (tech, security, crypto)
+2. **Cluster** — groups related headlines across feeds so one story can cite 2+ sources
+3. **Rewrite** — Groq (Llama 3.3 70B) rewrites into a fixed format: What happened / Why it matters / Extra context / Sources. Urgent posts use a shorter URGENT template.
+4. **Broadcast** — digests go to everyone who subscribed via `/start`; urgent alerts bypass the schedule
+5. **Dedup** — keeps a local log of what's already been posted so nothing repeats
 
 No manual chat ID entry needed. Anyone (you, teammates, the group, family) just sends `/start` to the bot once and they're subscribed to every future post. `/stop` unsubscribes.
 
@@ -60,9 +61,9 @@ Bot running. Anyone can /start to subscribe. Scheduled for 5 AM / 5 PM (Phnom Pe
 
 ## Using the bot
 
-- **`/start`** — subscribes the current chat (DM, group, or channel) to news broadcasts
+- **`/start`** — subscribes the current chat (DM, group, or channel) to digests + urgent alerts
 - **`/stop`** — unsubscribes
-- **`/fetch`** — manually triggers a fetch + broadcast right now (use this for testing instead of waiting for 5 AM/5 PM)
+- **`/fetch`** — manually triggers a full digest right now (use this for testing instead of waiting for 5 AM/5 PM)
 
 Subscriptions are stored locally in `subscribers.json` (gitignored — each person running the bot has their own local copy, not shared through git).
 
@@ -96,8 +97,10 @@ No other code changes needed — the fetch loop handles any number of feeds.
 ## Known limitations / next steps
 
 - Website sync (Telegram → website) not built yet — this is Telegram-only for now
-- No moderation/filter pass on AI output yet — currently trusting the prompt constraints; consider adding an automated check for advice-language before posting
+- Story clustering is title-similarity based — related stories with very different headlines may stay separate
+- No moderation/filter pass on AI output yet — currently trusting the prompt constraints
 - Live crypto price data (not just news) not wired in yet — could pull from CoinGecko's free API
+- Hosting / secrets setup is outside the bot script — use `.env` locally or your host's secret store
 
 ## Questions / bugs
 
