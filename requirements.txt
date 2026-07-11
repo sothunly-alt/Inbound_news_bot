@@ -1,5 +1,6 @@
-python-telegram-bot==22.2
+python-telegram-bot[job-queue]==22.2
 feedparser==6.0.11
-openai==1.40.6
+openai==1.82.0
+httpx==0.28.1
 pytz==2024.1
 python-dotenv==1.0.1
