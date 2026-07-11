@@ -32,7 +32,7 @@ import feedparser
 import pytz
 from dotenv import load_dotenv
 from openai import OpenAI
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
 load_dotenv()
 
@@ -67,6 +67,12 @@ URGENT_KEYWORDS = (
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 PORT = int(os.environ.get("PORT", "10000"))
+
+# Optional: always post here (needed on Render — local subscribers.json is ephemeral)
+_CHANNEL_RAW = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
+TELEGRAM_CHANNEL_ID = int(_CHANNEL_RAW) if _CHANNEL_RAW else None
+_THREAD_RAW = os.environ.get("TELEGRAM_THREAD_ID", "").strip()
+TELEGRAM_THREAD_ID = int(_THREAD_RAW) if _THREAD_RAW else None
 
 client = OpenAI(
     api_key=os.environ["GROQ_API_KEY"],
@@ -239,14 +245,26 @@ Return ONLY the formatted post text, nothing else."""
 
 
 async def broadcast(context: ContextTypes.DEFAULT_TYPE, posts: list[str]):
-    subscribers = load_subscribers()
-    if not subscribers:
-        print("No subscribers yet — nothing to send.")
+    """Send posts to the configured channel (if any) plus /start subscribers."""
+    targets: dict[int, int | None] = {}
+
+    if TELEGRAM_CHANNEL_ID is not None:
+        targets[TELEGRAM_CHANNEL_ID] = TELEGRAM_THREAD_ID
+
+    for chat_id in load_subscribers():
+        targets.setdefault(int(chat_id), None)
+
+    if not targets:
+        print("No channel or subscribers configured — nothing to send.")
         return
-    for chat_id in subscribers:
+
+    for chat_id, thread_id in targets.items():
         for post_text in posts:
+            kwargs = {"chat_id": chat_id, "text": post_text}
+            if thread_id is not None:
+                kwargs["message_thread_id"] = thread_id
             try:
-                await context.bot.send_message(chat_id=chat_id, text=post_text)
+                await context.bot.send_message(**kwargs)
             except Exception as e:
                 print(f"Failed to send to {chat_id}: {e}")
 
@@ -304,6 +322,12 @@ async def urgent_job(context: ContextTypes.DEFAULT_TYPE):
     await fetch_and_post(context, urgent_only=True)
 
 
+async def _reply(update, text: str):
+    msg = update.effective_message
+    if msg:
+        await msg.reply_text(text)
+
+
 async def start_command(update, context: ContextTypes.DEFAULT_TYPE):
     """Anyone who sends /start gets subscribed to future news broadcasts."""
     subscribers = load_subscribers()
@@ -313,11 +337,12 @@ async def start_command(update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in subscribers:
         subscribers.add(chat_id)
         save_subscribers(subscribers)
-        await update.message.reply_text(
-            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately."
+        await _reply(
+            update,
+            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately.",
         )
     else:
-        await update.message.reply_text("You're already subscribed.")
+        await _reply(update, "You're already subscribed.")
 
 
 async def stop_command(update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,14 +352,15 @@ async def stop_command(update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id in subscribers:
         subscribers.discard(chat_id)
         save_subscribers(subscribers)
-        await update.message.reply_text("Unsubscribed. Send /start anytime to rejoin.")
+        await _reply(update, "Unsubscribed. Send /start anytime to rejoin.")
     else:
-        await update.message.reply_text("You weren't subscribed.")
+        await _reply(update, "You weren't subscribed.")
 
 
 async def fetch_command(update, context: ContextTypes.DEFAULT_TYPE):
     """Manual trigger: /fetch — runs a full digest now."""
-    await update.message.reply_text("Fetching latest tech news...")
+    print(f"[/fetch] from chat_id={update.effective_chat.id}")
+    await _reply(update, "Fetching latest tech news...")
     await fetch_and_post(context, urgent_only=False)
 
 
@@ -360,14 +386,28 @@ def start_health_server():
     server.serve_forever()
 
 
+def _add_command(app: Application, name: str, handler):
+    """Register a command for DMs/groups and for channel posts."""
+    app.add_handler(CommandHandler(name, handler))
+    app.add_handler(CommandHandler(name, handler, filters=filters.UpdateType.CHANNEL_POSTS))
+
+
 def main():
     # Bind PORT first so Render's port scanner succeeds during startup.
     threading.Thread(target=start_health_server, daemon=True).start()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("stop", stop_command))
-    app.add_handler(CommandHandler("fetch", fetch_command))
+    _add_command(app, "start", start_command)
+    _add_command(app, "stop", stop_command)
+    _add_command(app, "fetch", fetch_command)
+
+    if TELEGRAM_CHANNEL_ID is not None:
+        print(
+            f"Channel target: {TELEGRAM_CHANNEL_ID}"
+            + (f" thread={TELEGRAM_THREAD_ID}" if TELEGRAM_THREAD_ID else "")
+        )
+    else:
+        print("WARNING: TELEGRAM_CHANNEL_ID not set — only /start subscribers get posts.")
 
     # Scheduled digests: 5:00 AM and 5:00 PM, Phnom Penh time
     app.job_queue.run_daily(digest_job, time=time(hour=5, minute=0, tzinfo=TIMEZONE))
