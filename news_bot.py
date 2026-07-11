@@ -20,8 +20,9 @@ How people join:
   and get every future news post automatically. /stop unsubscribes.
 """
 
-import os
+import asyncio
 import json
+import os
 import re
 from datetime import time
 
@@ -355,6 +356,13 @@ def main():
         "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). "
         "Urgent alerts checked every 15 minutes."
     )
+    # Python 3.12+ (and especially 3.14) no longer auto-creates an event loop
+    # in the main thread; PTB's run_polling still expects one to exist.
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     app.run_polling()
 
 
