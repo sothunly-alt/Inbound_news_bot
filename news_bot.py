@@ -24,7 +24,9 @@ import asyncio
 import json
 import os
 import re
+import threading
 from datetime import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import feedparser
 import pytz
@@ -64,6 +66,7 @@ URGENT_KEYWORDS = (
 )
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+PORT = int(os.environ.get("PORT", "10000"))
 
 client = OpenAI(
     api_key=os.environ["GROQ_API_KEY"],
@@ -335,7 +338,32 @@ async def fetch_command(update, context: ContextTypes.DEFAULT_TYPE):
     await fetch_and_post(context, urgent_only=False)
 
 
+class HealthHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP server so Render Web Services detect an open port."""
+
+    def do_GET(self):
+        body = b"ok" if self.path in ("/", "/health") else b"not found"
+        code = 200 if body == b"ok" else 404
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):  # noqa: A003 — silence access logs
+        return
+
+
+def start_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    print(f"Health server listening on 0.0.0.0:{PORT} (/ and /health)")
+    server.serve_forever()
+
+
 def main():
+    # Bind PORT first so Render's port scanner succeeds during startup.
+    threading.Thread(target=start_health_server, daemon=True).start()
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("stop", stop_command))
