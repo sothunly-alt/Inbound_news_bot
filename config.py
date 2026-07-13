@@ -18,6 +18,10 @@ RSS_FEEDS: list[str] = [
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "https://www.bleepingcomputer.com/feed/",
     "https://krebsonsecurity.com/feed/",
+    "https://techfundingnews.com/feed/",
+    "https://techstartups.com/feed/",
+    "https://www.technologyreview.com/feed/"
+
 ]
 MAX_ITEMS_PER_FEED: int = 5
 
