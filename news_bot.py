@@ -6,7 +6,7 @@ to everyone who has messaged the bot with /start.
 
 Schedule:
   - Digest posts at 5:00 AM and 5:00 PM (Phnom Penh time)
-  - Urgent breaking news checked every 15 minutes and sent immediately
+  - Use /fetch for on-demand news
 
 Setup:
   pip install -r requirements.txt
@@ -33,7 +33,6 @@ from config import (
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
     TIMEZONE,
-    URGENT_CHECK_INTERVAL_SECONDS,
 )
 from health import start_health_server
 
@@ -45,13 +44,8 @@ logger = logging.getLogger(__name__)
 
 
 async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled digest job — non-urgent stories."""
-    await fetch_and_post(context, urgent_only=False)
-
-
-async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled urgent check — immediate alerts for breaking news."""
-    await fetch_and_post(context, urgent_only=True)
+    """Scheduled digest job — all new stories at 5 AM and 5 PM."""
+    await fetch_and_post(context)
 
 
 async def _reply(update: object, text: str) -> None:
@@ -98,7 +92,7 @@ async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     chat_id = effective_chat.id if effective_chat else "?"
     logger.info("[/fetch] from chat_id=%s", chat_id)
     await _reply(update, "Fetching latest tech news...")
-    await fetch_and_post(context, urgent_only=False)
+    await fetch_and_post(context)
 
 
 def _add_command(app: Application, name: str, handler: object) -> None:
@@ -131,16 +125,8 @@ def main() -> None:
     app.job_queue.run_daily(digest_job, time=dt_time(hour=5, minute=0, tzinfo=TIMEZONE))
     app.job_queue.run_daily(digest_job, time=dt_time(hour=17, minute=0, tzinfo=TIMEZONE))
 
-    # Urgent breaking news: poll frequently and send immediately
-    app.job_queue.run_repeating(
-        urgent_job,
-        interval=URGENT_CHECK_INTERVAL_SECONDS,
-        first=60,
-    )
-
     logger.info(
-        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). "
-        "Urgent alerts checked every 15 minutes."
+        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). Use /fetch for on-demand."
     )
 
     # Python 3.12+ no longer auto-creates an event loop in the main thread

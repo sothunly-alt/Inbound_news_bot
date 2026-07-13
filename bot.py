@@ -9,7 +9,6 @@ from telegram.ext import ContextTypes
 
 from ai import rewrite_with_ai
 from config import (
-    MAX_URGENT_POSTS_PER_RUN,
     POSTED_LOG,
     SUBSCRIBERS_LOG,
     TELEGRAM_CHANNEL_ID,
@@ -87,14 +86,11 @@ async def broadcast(context: ContextTypes.DEFAULT_TYPE, posts: list[str]) -> Non
 
 async def fetch_and_post(
     context: ContextTypes.DEFAULT_TYPE,
-    urgent_only: bool = False,
 ) -> None:
     """Fetch feeds, cluster, rewrite, and broadcast.
 
-    urgent_only=True  -> only post clusters that look urgent (immediate alerts)
-    urgent_only=False -> scheduled digest of non-urgent (and any urgent not yet sent)
-
-    Rate limiting: urgent runs cap at MAX_URGENT_POSTS_PER_RUN posts.
+    All clusters are processed. Urgent stories get the [URGENT: ...] prefix.
+    Everything is bundled into a single digest message.
     """
     posted_ids = load_posted_ids()
     entries = collect_new_entries(posted_ids)
@@ -104,20 +100,9 @@ async def fetch_and_post(
 
     clusters = cluster_entries(entries)
     new_posts: list[str] = []
-    urgent_count = 0
 
     for cluster in clusters:
         urgent = looks_urgent(cluster)
-        if urgent_only and not urgent:
-            continue
-
-        # Rate limiting for urgent posts
-        if urgent_only and urgent:
-            if urgent_count >= MAX_URGENT_POSTS_PER_RUN:
-                logger.info("Urgent rate limit reached (%d), skipping remaining", MAX_URGENT_POSTS_PER_RUN)
-                break
-            urgent_count += 1
-
         try:
             post_text = rewrite_with_ai(cluster, urgent=urgent)
             new_posts.append(post_text)
@@ -131,7 +116,7 @@ async def fetch_and_post(
         logger.info("No posts generated this run.")
         return
 
-    if not urgent_only and len(new_posts) > 1:
+    if len(new_posts) > 1:
         header = f"Tech digest — {len(new_posts)} stories\n\n"
         digest = header + "\n\n———\n\n".join(new_posts)
         await broadcast(context, [digest])
@@ -139,5 +124,4 @@ async def fetch_and_post(
         await broadcast(context, new_posts)
 
     save_posted_ids(posted_ids)
-    kind = "urgent" if urgent_only else "digest"
-    logger.info("Sent %d %s post(s).", len(new_posts), kind)
+    logger.info("Sent %d post(s).", len(new_posts))

@@ -6,7 +6,6 @@ import re
 from config import (
     DIGEST_MIN_SOURCES,
     GROQ_MODEL,
-    URGENT_MIN_SOURCES,
     client,
 )
 from feeds import Entry
@@ -55,13 +54,12 @@ def rewrite_with_ai(cluster: list[Entry], urgent: bool = False) -> str:
             seen.add(entry.link)
             links.append(entry.link)
 
-    # Prefer more sources for urgent/major stories; still allow single-source
-    preferred = URGENT_MIN_SOURCES if urgent else DIGEST_MIN_SOURCES
+    # Prefer more sources for stories; still allow single-source
     source_note = ""
-    if len(links) < preferred:
+    if len(links) < DIGEST_MIN_SOURCES:
         source_note = (
             f"\nNote: only {len(links)} source(s) available so far "
-            f"(prefer {preferred}+ when possible)."
+            f"(prefer {DIGEST_MIN_SOURCES}+ when possible)."
         )
 
     headlines = "\n".join(

@@ -30,9 +30,7 @@ GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 
 # ---- Scheduling ----
 TIMEZONE = pytz.timezone("Asia/Phnom_Penh")
-URGENT_CHECK_INTERVAL_SECONDS: int = 15 * 60
 DIGEST_MIN_SOURCES: int = 2
-URGENT_MIN_SOURCES: int = 3
 
 # ---- Rate limiting ----
 MAX_URGENT_POSTS_PER_RUN: int = 5
