@@ -87,12 +87,22 @@ async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Manual trigger: /fetch — runs a full digest now."""
+    """Manual trigger: /fetch — runs a full digest now and reports the outcome."""
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else "?"
     logger.info("[/fetch] from chat_id=%s", chat_id)
     await _reply(update, "Fetching latest tech news...")
-    await fetch_and_post(context)
+    try:
+        posted_count = await fetch_and_post(context)
+    except Exception:
+        logger.exception("[/fetch] fetch_and_post raised for chat_id=%s", chat_id)
+        await _reply(update, "Couldn't fetch news right now — something went wrong. Check the logs.")
+        return
+
+    if posted_count == 0:
+        await _reply(update, "No new updates right now — checked all feeds, nothing new to post.")
+    else:
+        await _reply(update, f"Posted {posted_count} new stor{'y' if posted_count == 1 else 'ies'}.")
 
 
 def _add_command(app: Application, name: str, handler: object) -> None:
