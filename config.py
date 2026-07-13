@@ -55,6 +55,11 @@ POSTED_LOG: str = "posted_ids.json"
 SUBSCRIBERS_LOG: str = "subscribers.json"
 
 # ---- Telegram ----
+_REQUIRED_VARS = ["TELEGRAM_BOT_TOKEN", "GROQ_API_KEY"]
+_missing = [v for v in _REQUIRED_VARS if not os.environ.get(v)]
+if _missing:
+    raise SystemExit(f"Missing required env vars: {', '.join(_missing)}. Set them in Railway → Variables tab.")
+
 TELEGRAM_BOT_TOKEN: str = os.environ["TELEGRAM_BOT_TOKEN"]
 PORT: int = int(os.environ.get("PORT", "10000"))
 
