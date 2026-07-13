@@ -1,107 +1,111 @@
 # Inbound News Bot
 
-Auto-generated news bot that fetches tech + crypto headlines from multiple trusted RSS sources, clusters related stories, rewrites them with AI into a fixed Telegram format (facts only, no advice/opinions), and broadcasts digests to subscribers. Scheduled digests at 5 AM / 5 PM Phnom Penh time; urgent alerts send immediately. Telegram first — website sync comes later.
+A Telegram bot that fetches tech, crypto, and cybersecurity news from 8 trusted RSS feeds, clusters related stories, rewrites them with AI into a clean fixed format, and broadcasts daily digests to subscribers.
 
-## How it works
+- **Schedule**: 5 AM & 5 PM Phnom Penh time (UTC+7)
+- **On-demand**: `/fetch` triggers a digest immediately
+- **Format**: Facts only — no opinions, no speculation, no buy/sell advice
 
-1. **Fetch** — pulls the latest items from multiple trusted RSS feeds (tech, security, crypto)
-2. **Cluster** — groups related headlines across feeds so one story can cite 2+ sources
-3. **Rewrite** — Groq (Llama 3.3 70B) rewrites into a fixed format: What happened / Why it matters / Extra context / Sources. Urgent posts use a shorter URGENT template.
-4. **Broadcast** — digests go to everyone who subscribed via `/start`; urgent alerts bypass the schedule
-5. **Dedup** — keeps a local log of what's already been posted so nothing repeats
+## How It Works
 
-No manual chat ID entry needed. Anyone (you, teammates, the group, family) just sends `/start` to the bot once and they're subscribed to every future post. `/stop` unsubscribes.
+```
+8 RSS Feeds → collect → cluster → looks_urgent → rewrite_with_ai → broadcast
+```
 
-## Setup (do this once)
+1. **Fetch** — pulls latest items from 8 RSS feeds (5 per feed max)
+2. **Cluster** — groups related headlines using title+summary similarity (threshold 0.45)
+3. **Rewrite** — Groq (Llama 3.3 70B) rewrites into a fixed format with source links
+4. **Broadcast** — sends a single digest message to the channel + all subscribers
+5. **Dedup** — logs posted entry IDs so nothing repeats
 
-**1. Clone the repo**
+## Setup
+
 ```bash
-git clone https://github.com/yourusername/inbound-news.git
-cd inbound-news
-```
-
-**2. Create a virtual environment**
-```bash
-python -m venv venv
-```
-Activate it:
-- Windows (PowerShell): `.\venv\Scripts\Activate.ps1`
-- Mac/Linux: `source venv/bin/activate`
-
-**3. Install dependencies**
-```bash
-pip install python-telegram-bot feedparser openai pytz python-dotenv "python-telegram-bot[job-queue]"
-```
-(On Linux/Mac, add `--break-system-packages` if pip complains.)
-
-**4. Set up your `.env` file**
-
-Copy the example file and fill in your own keys — never commit this file, it's already gitignored.
-```bash
-cp .env.example .env
-```
-Then open `.env` and fill in:
-```
-TELEGRAM_BOT_TOKEN=
-GROQ_API_KEY=
-```
-
-- **TELEGRAM_BOT_TOKEN** — ask in the team group for the shared bot token, or create your own test bot via @BotFather on Telegram (`/newbot`) for local development.
-- **GROQ_API_KEY** — free, no card needed. Sign up at console.groq.com/keys and generate a key.
-
-**5. Run it**
-```bash
+git clone https://github.com/sothunly-alt/Inbound_news_bot.git
+cd Inbound_news_bot
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # then fill in your tokens
 python news_bot.py
 ```
 
-You should see:
-```
-Bot running. Anyone can /start to subscribe. Scheduled for 5 AM / 5 PM (Phnom Penh time).
-```
-
-## Using the bot
-
-- **`/start`** — subscribes the current chat (DM, group, or channel) to digests + urgent alerts
-- **`/stop`** — unsubscribes
-- **`/fetch`** — manually triggers a full digest right now (use this for testing instead of waiting for 5 AM/5 PM)
-
-Subscriptions are stored locally in `subscribers.json` (gitignored — each person running the bot has their own local copy, not shared through git).
-
-## Project structure
+### Environment Variables
 
 ```
-news_bot.py       - main bot script
-.env              - your local secrets (never committed)
-.env.example      - template showing which env vars are needed
-subscribers.json  - local list of subscribed chat IDs (auto-created, gitignored)
-posted_ids.json   - local dedup log of already-posted items (auto-created, gitignored)
+TELEGRAM_BOT_TOKEN=     # from @BotFather (required)
+GROQ_API_KEY=           # from console.groq.com (required)
+TELEGRAM_CHANNEL_ID=    # group/channel chat ID (required)
+TELEGRAM_THREAD_ID=     # forum topic thread ID (optional)
+PORT=                   # health server port (default: 10000)
 ```
 
-## Things to know before touching the code
+## Commands
 
-- **Copyright**: the AI must rewrite in its own words, never closely mirror the original article. Every post includes a `Source:` link back to the original — this is required, don't remove it.
-- **Trading content is facts-only**: no "buy", "sell", "should", or price predictions. Only report what happened (e.g. "Bitcoin dropped 8% in the last hour"). If you touch the prompt in `rewrite_with_ai()`, keep these constraints intact.
-- **Only one bot instance can run at a time** per token — if you get a `Conflict: terminated by other getUpdates request` error, someone else (or another terminal) is already running the same token. Close other instances first.
+| Command | Description |
+|---------|-------------|
+| `/start` | Subscribe to daily digests |
+| `/stop` | Unsubscribe |
+| `/fetch` | Trigger a digest right now |
 
-## Adding more news sources
+## Output Format
 
-Add a URL to the `RSS_FEEDS` list near the top of `news_bot.py`:
+**Normal:**
+```
+**<title>**
+- What happened: <one sentence>
+- Why it matters: <one sentence>
+- Extra context: <one sentence>
+- Sources: <link> | <link>
+```
+
+**Urgent:**
+```
+**[URGENT: <title>]**
+- What happened: <one sentence>
+- Why it matters: <one sentence>
+- Sources: <link> | <link>
+```
+
+## Project Structure
+
+```
+news_bot.py     Entry point — scheduler, handlers, main loop
+config.py       Configuration constants and env vars
+feeds.py        RSS fetching, normalization, clustering, urgency detection
+ai.py           AI rewriting with output validation and fallback
+bot.py          State management (subscribers, dedup) and broadcast logic
+health.py       HTTP health server for Render
+tests/          38 tests (feeds, AI validation, state management)
+```
+
+## Testing
+
+```bash
+python -m pytest tests/ -v
+ruff check . --exclude venv
+```
+
+## Deployment
+
+- **Render**: Health server on port 10000 keeps bot alive. Set env vars in dashboard.
+- **GitHub Actions**: Runs on cron `0 22` and `0 10` UTC (5 AM/5 PM Phnom Penh). Set secrets in repo settings.
+
+## Adding News Sources
+
+Add a URL to `RSS_FEEDS` in `config.py`:
 ```python
 RSS_FEEDS = [
     "https://techcrunch.com/feed/",
     "https://your-new-feed-url-here/",
 ]
 ```
-No other code changes needed — the fetch loop handles any number of feeds.
 
-## Known limitations / next steps
+## Known Limitations
 
-- Website sync (Telegram → website) not built yet — this is Telegram-only for now
-- Story clustering is title-similarity based — related stories with very different headlines may stay separate
-- No moderation/filter pass on AI output yet — currently trusting the prompt constraints
-- Live crypto price data (not just news) not wired in yet — could pull from CoinGecko's free API
-- Hosting / secrets setup is outside the bot script — use `.env` locally or your host's secret store
+- `posted_ids.json` is local/ephemeral — restarts can cause reposts
+- Clustering is similarity-based — very different headlines on the same topic may stay separate
+- Only one bot instance can run per token at a time
 
-## Questions / bugs
+## Questions / Bugs
 
 Ping Sothun, Vichea, Raksa, or Hourmeng in the team group.
