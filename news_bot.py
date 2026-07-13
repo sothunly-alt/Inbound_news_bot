@@ -27,7 +27,7 @@ from datetime import time as dt_time
 
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
-from bot import fetch_and_post, load_subscribers, save_subscribers
+from bot import fetch_and_post
 from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
@@ -35,6 +35,7 @@ from config import (
     TIMEZONE,
 )
 from health import start_health_server
+from state import get_state
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -57,14 +58,15 @@ async def _reply(update: object, text: str) -> None:
 
 async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Subscribe the current chat to future news broadcasts."""
-    subscribers = load_subscribers()
+    state = get_state()
+    subscribers = state.load_subscribers()
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else 0
     chat_title = (effective_chat.title or effective_chat.first_name or "unknown") if effective_chat else "unknown"
     logger.info("[/start] chat_id=%s  name=%s", chat_id, chat_title)
     if chat_id not in subscribers:
         subscribers.add(chat_id)
-        save_subscribers(subscribers)
+        state.save_subscribers(subscribers)
         await _reply(
             update,
             "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately.",
@@ -75,12 +77,13 @@ async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Unsubscribe from broadcasts."""
-    subscribers = load_subscribers()
+    state = get_state()
+    subscribers = state.load_subscribers()
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else 0
     if chat_id in subscribers:
         subscribers.discard(chat_id)
-        save_subscribers(subscribers)
+        state.save_subscribers(subscribers)
         await _reply(update, "Unsubscribed. Send /start anytime to rejoin.")
     else:
         await _reply(update, "You weren't subscribed.")

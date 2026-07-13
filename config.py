@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---- Redis (optional — enables persistent state on Railway/Render) ----
+REDIS_URL: str = os.environ.get("REDIS_URL", "").strip()
+
 # ---- RSS ----
 RSS_FEEDS: list[str] = [
     "https://techcrunch.com/feed/",

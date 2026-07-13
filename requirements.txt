@@ -4,6 +4,7 @@ openai==1.82.0
 httpx==0.28.1
 pytz==2024.1
 python-dotenv==1.0.1
+redis>=5.0
 
 # Dev/test
 pytest>=8.0
