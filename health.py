@@ -1,4 +1,4 @@
-"""HTTP health check server for Render Web Services."""
+"""HTTP health check server for Render / Railway deployments."""
 
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
