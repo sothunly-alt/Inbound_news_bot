@@ -25,6 +25,9 @@ from state import get_state
 
 logger = logging.getLogger(__name__)
 
+# Prevents concurrent digest + urgent pipeline execution
+_pipeline_lock = asyncio.Lock()
+
 
 @dataclass
 class StoryPost:
@@ -224,47 +227,49 @@ def _prepare_urgent() -> list[StoryPost]:
 
 async def fetch_and_post(context: ContextTypes.DEFAULT_TYPE) -> int:
     """Fetch feeds, send each story separately (max DIGEST_MAX_STORIES)."""
-    stories = await asyncio.to_thread(_prepare_digest)
-    if not stories:
-        logger.info("No posts generated this digest run.")
+    async with _pipeline_lock:
+        stories = await asyncio.to_thread(_prepare_digest)
+        if not stories:
+            logger.info("No posts generated this digest run.")
+            return 0
+
+        succeeded = await broadcast_stories(context, stories)
+        if succeeded:
+            state = get_state()
+            state.add_posted_ids(succeeded)
+            titles = set()
+            for s in stories:
+                if s.entry_ids & succeeded:
+                    titles.update(normalize_title_key(t) for t in s.entry_titles)
+            state.add_posted_titles(titles)
+            count = sum(1 for s in stories if s.entry_ids & succeeded)
+            logger.info("Sent %d digest stor(y/ies).", count)
+            return count
+
+        logger.error("Digest broadcast failed — not marking posted IDs.")
         return 0
-
-    succeeded = await broadcast_stories(context, stories)
-    if succeeded:
-        state = get_state()
-        state.add_posted_ids(succeeded)
-        titles = set()
-        for s in stories:
-            if s.entry_ids & succeeded:
-                titles.update(normalize_title_key(t) for t in s.entry_titles)
-        state.add_posted_titles(titles)
-        count = sum(1 for s in stories if s.entry_ids & succeeded)
-        logger.info("Sent %d digest stor(y/ies).", count)
-        return count
-
-    logger.error("Digest broadcast failed — not marking posted IDs.")
-    return 0
 
 
 async def fetch_urgent_and_post(context: ContextTypes.DEFAULT_TYPE) -> int:
     """Hourly urgent path: keyword matches only; skip already-posted IDs."""
-    stories = await asyncio.to_thread(_prepare_urgent)
-    if not stories:
-        logger.info("No urgent posts this hour.")
+    async with _pipeline_lock:
+        stories = await asyncio.to_thread(_prepare_urgent)
+        if not stories:
+            logger.info("No urgent posts this hour.")
+            return 0
+
+        succeeded = await broadcast_stories(context, stories)
+        if succeeded:
+            state = get_state()
+            state.add_posted_ids(succeeded)
+            titles = set()
+            for s in stories:
+                if s.entry_ids & succeeded:
+                    titles.update(normalize_title_key(t) for t in s.entry_titles)
+            state.add_posted_titles(titles)
+            count = sum(1 for s in stories if s.entry_ids & succeeded)
+            logger.info("Sent %d urgent post(s).", count)
+            return count
+
+        logger.error("Urgent broadcast failed — not marking posted IDs.")
         return 0
-
-    succeeded = await broadcast_stories(context, stories)
-    if succeeded:
-        state = get_state()
-        state.add_posted_ids(succeeded)
-        titles = set()
-        for s in stories:
-            if s.entry_ids & succeeded:
-                titles.update(normalize_title_key(t) for t in s.entry_titles)
-        state.add_posted_titles(titles)
-        count = sum(1 for s in stories if s.entry_ids & succeeded)
-        logger.info("Sent %d urgent post(s).", count)
-        return count
-
-    logger.error("Urgent broadcast failed — not marking posted IDs.")
-    return 0

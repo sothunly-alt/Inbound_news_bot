@@ -15,6 +15,7 @@ from ai import (
     trim_for_caption,
     collect_links,
     pick_image_url,
+    rewrite_with_ai,
 )
 
 
@@ -260,6 +261,30 @@ class TestFallbackData:
         assert "TechCrunch" in data["key_points"][0]
         assert "The Verge" in data["key_points"][0]
 
+    def test_fallback_empty_title(self):
+        entries = [Entry(id="1", title="", summary="Summary text", link="http://a.com", source_name="A")]
+        data = _fallback_data(entries, urgent=False)
+        assert data["headline"] == "Untitled Story"
+        assert data["summary"] == "Summary text"
+
+    def test_fallback_empty_summary(self):
+        entries = [Entry(id="1", title="Test Title", summary="", link="http://a.com", source_name="A")]
+        data = _fallback_data(entries, urgent=False)
+        assert data["headline"] == "Test Title"
+        assert data["summary"] == "No summary available."
+
+    def test_fallback_both_empty(self):
+        entries = [Entry(id="1", title="", summary="", link="http://a.com", source_name="A")]
+        data = _fallback_data(entries, urgent=False)
+        assert data["headline"] == "Untitled Story"
+        assert data["summary"] == "No summary available."
+
+    def test_fallback_always_validates(self):
+        entries = [Entry(id="1", title="Test", summary="Sum", link="http://a.com", source_name="A")]
+        data = _fallback_data(entries, urgent=False)
+        is_valid, reason = _validate_ai_data(data)
+        assert is_valid is True, f"Fallback data failed validation: {reason}"
+
 
 # --- Existing Utilities ---
 
@@ -329,3 +354,30 @@ class TestPickImageUrl:
     def test_no_image(self):
         entries = [Entry(id="1", title="A", summary="", link="http://a.com", source_name="A")]
         assert pick_image_url(entries) is None
+
+
+class TestHeaderParameter:
+    def test_header_prepended_to_output(self):
+        cluster = [Entry(id="1", title="Test", summary="Summary", link="http://a.com", source_name="A")]
+        # Mock the Groq client to return valid AI data
+        from unittest.mock import MagicMock, patch
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"urgency": "analysis", "category": "ai", "headline": "Test Story", "summary": "A summary", "key_points": ["point"], "tags": ["Tag"]}'
+        with patch("ai.client") as mock_client:
+            mock_client.chat.completions.create.return_value = mock_response
+            result = rewrite_with_ai(cluster, header="📰 1/3 · January 16, 2026")
+        assert result.startswith("📰 1/3 · January 16, 2026\n\n")
+        assert "Test Story" in result
+
+    def test_no_header(self):
+        cluster = [Entry(id="1", title="Test", summary="Summary", link="http://a.com", source_name="A")]
+        from unittest.mock import MagicMock, patch
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"urgency": "analysis", "category": "ai", "headline": "Test Story", "summary": "A summary", "key_points": ["point"], "tags": ["Tag"]}'
+        with patch("ai.client") as mock_client:
+            mock_client.chat.completions.create.return_value = mock_response
+            result = rewrite_with_ai(cluster, header=None)
+        assert not result.startswith("📰")
+        assert "Test Story" in result

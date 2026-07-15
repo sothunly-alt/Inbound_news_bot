@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import feedparser
+import httpx
 
 from config import (
     CLUSTER_SIMILARITY_THRESHOLD,
@@ -23,6 +24,12 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Module-level HTTP client with timeout for real cancellation
+_http_client = httpx.Client(timeout=FEED_TIMEOUT_SECONDS, follow_redirects=True)
+
+# Shared thread pool for parallel feed fetching
+_feed_pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(RSS_FEEDS), 10))
 
 # Stop words for title normalization
 _STOP_WORDS: frozenset[str] = frozenset({
@@ -159,53 +166,72 @@ def _is_title_duplicate(title: str, posted_titles: set[str], threshold: float = 
     return False
 
 
-def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = None) -> list[Entry]:
-    """Pull fresh entries from all feeds, skipping already-posted IDs and similar titles.
+def _fetch_feed(url: str) -> Any:
+    """Fetch a single RSS feed using httpx (real timeout) then parse with feedparser."""
+    resp = _http_client.get(url)
+    resp.raise_for_status()
+    return feedparser.parse(resp.text)
 
-    Each feed is fetched independently — a failure in one feed does not
-    prevent the others from being collected.
+
+def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = None) -> list[Entry]:
+    """Pull fresh entries from all feeds in parallel, skipping already-posted IDs and similar titles.
+
+    All feeds are fetched concurrently — a slow/dead feed does not block others.
     """
     if posted_titles is None:
         posted_titles = set()
+
+    # Submit all feeds in parallel
+    futures: dict[concurrent.futures.Future, str] = {
+        _feed_pool.submit(_fetch_feed, url): url for url in RSS_FEEDS
+    }
+
     entries: list[Entry] = []
-    for feed_url in RSS_FEEDS:
+    global_timeout = FEED_TIMEOUT_SECONDS + 10
+
+    for future in concurrent.futures.as_completed(futures, timeout=global_timeout):
+        feed_url = futures[future]
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(feedparser.parse, feed_url)
-                try:
-                    feed = future.result(timeout=FEED_TIMEOUT_SECONDS)
-                except concurrent.futures.TimeoutError:
-                    logger.warning("Feed %s timed out after %ds", feed_url, FEED_TIMEOUT_SECONDS)
-                    continue
-            if feed.bozo and not feed.entries:
-                logger.warning("Feed %s returned an error: %s", feed_url, feed.bozo_exception)
-                continue
-            source_name: str = feed.feed.get("title", feed_url)
-            count = 0
-            for entry in feed.entries:
-                if count >= MAX_ITEMS_PER_FEED:
-                    break
-                entry_id: str = entry.get("id", entry.link)
-                if entry_id in posted_ids:
-                    continue
-                if _is_entry_too_old(entry):
-                    logger.debug("Skipping stale entry: %s", entry.get("title", ""))
-                    continue
-                title = entry.get("title", "").strip()
-                if _is_title_duplicate(title, posted_titles):
-                    logger.debug("Skipping duplicate title: %s", title)
-                    continue
-                entries.append(Entry(
-                    id=entry_id,
-                    title=title,
-                    summary=(entry.get("summary", "") or "")[:500],
-                    link=entry.link,
-                    source_name=source_name,
-                    image_url=extract_image_url(entry),
-                ))
-                count += 1
+            feed = future.result(timeout=FEED_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            logger.warning("Feed %s timed out after %ds", feed_url, FEED_TIMEOUT_SECONDS)
+            continue
+        except httpx.TimeoutException:
+            logger.warning("Feed %s HTTP timeout after %ds", feed_url, FEED_TIMEOUT_SECONDS)
+            continue
         except Exception:
             logger.exception("Failed to fetch feed %s", feed_url)
+            continue
+
+        if feed.bozo and not feed.entries:
+            logger.warning("Feed %s returned an error: %s", feed_url, feed.bozo_exception)
+            continue
+
+        source_name: str = feed.feed.get("title", feed_url)
+        count = 0
+        for entry in feed.entries:
+            if count >= MAX_ITEMS_PER_FEED:
+                break
+            entry_id: str = entry.get("id", entry.link)
+            if entry_id in posted_ids:
+                continue
+            if _is_entry_too_old(entry):
+                logger.debug("Skipping stale entry: %s", entry.get("title", ""))
+                continue
+            title = entry.get("title", "").strip()
+            if _is_title_duplicate(title, posted_titles):
+                logger.debug("Skipping duplicate title: %s", title)
+                continue
+            entries.append(Entry(
+                id=entry_id,
+                title=title,
+                summary=(entry.get("summary", "") or "")[:500],
+                link=entry.link,
+                source_name=source_name,
+                image_url=extract_image_url(entry),
+            ))
+            count += 1
+
     return entries
 
 

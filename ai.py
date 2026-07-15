@@ -407,11 +407,22 @@ Stories covering the same event:
             logger.warning("Failed to parse AI output as JSON, using fallback. Raw: %.200s", raw_output)
             data = _fallback_data(cluster, urgent)
 
-    # Validate
+    # Validate (only call fallback once to avoid infinite loop)
     is_valid, reason = _validate_ai_data(data)
     if not is_valid:
         logger.warning("AI output validation failed (%s), using fallback", reason)
         data = _fallback_data(cluster, urgent)
+        is_valid, _ = _validate_ai_data(data)
+        if not is_valid:
+            logger.error("Fallback data also failed validation — using hardcoded minimal data")
+            data = {
+                "urgency": "alert",
+                "category": "startups",
+                "headline": cluster[0].title or "Untitled Story",
+                "summary": (cluster[0].summary or "No summary available.")[:200],
+                "key_points": [],
+                "tags": [],
+            }
 
     # Inject source info
     data["source_name"] = source_name_str
@@ -420,7 +431,12 @@ Stories covering the same event:
     if urgent and data.get("urgency") not in ("breaking", "alert"):
         data["urgency"] = "alert"
 
-    return render_template(data)
+    # Prepend header if provided
+    rendered = render_template(data)
+    if header:
+        rendered = f"{header}\n\n{rendered}"
+
+    return rendered
 
 
 def _fallback_data(cluster: list[Entry], urgent: bool) -> dict:
@@ -429,11 +445,14 @@ def _fallback_data(cluster: list[Entry], urgent: bool) -> dict:
     urgency = "alert" if urgent else "analysis"
     source_names = list(dict.fromkeys(e.source_name for e in cluster))
 
+    title = (primary.title or "").strip() or "Untitled Story"
+    summary = (primary.summary or "No summary available.")[:200]
+
     return {
         "urgency": urgency,
         "category": "startups",
-        "headline": primary.title,
-        "summary": primary.summary[:200],
+        "headline": title,
+        "summary": summary,
         "key_points": [f"Reported by: {', '.join(source_names[:3])}"],
         "tags": ["News"],
     }
