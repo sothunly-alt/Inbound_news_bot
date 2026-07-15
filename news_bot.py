@@ -6,8 +6,8 @@ new story individually as soon as it's found — no fixed schedule, no
 digest bundling.
 
 Schedule:
-- Polls every POLL_INTERVAL_SECONDS (default 20 min)
-- Use /fetch for an on-demand check
+  - Digest posts at 5:00 AM and 5:00 PM (Phnom Penh time)
+  - Use /fetch for on-demand news
 
 Setup:
     pip install -r requirements.txt
@@ -28,12 +28,13 @@ import threading
 
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
-from bot import fetch_and_post
+from bot import fetch_and_post, load_subscribers, save_subscribers
 from config import (
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
+    TIMEZONE,
 )
 from health import start_health_server
 from state import get_state
@@ -50,9 +51,14 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Recurring poll — posts whatever's new since last check, even if it's just 1 story."""
+async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scheduled digest job — all new stories at 5 AM and 5 PM."""
     await fetch_and_post(context)
+
+
+async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hourly urgent check — keyword matches not already posted."""
+    await fetch_urgent_and_post(context)
 
 
 async def _reply(update: object, text: str) -> None:
@@ -76,7 +82,7 @@ async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         state.save_subscribers(subscribers)
         await _reply(
             update,
-            "Subscribed! You'll get news as soon as it's found — no fixed schedule anymore.",
+            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately.",
         )
     else:
         await _reply(update, "You're already subscribed.")
@@ -98,7 +104,7 @@ async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Manual trigger: /fetch — checks feeds now and reports the outcome."""
+    """Manual trigger: /fetch — runs a full digest now and reports the outcome."""
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else "?"
     logger.info("[/fetch] from chat_id=%s", chat_id)
@@ -144,12 +150,13 @@ def main() -> None:
     else:
         logger.warning("TELEGRAM_CHANNEL_ID not set — only /start subscribers get posts.")
 
-    # Continuous polling — posts as soon as new stories are found, no fixed schedule.
+    # Scheduled digests: 5:00 AM and 5:00 PM, Phnom Penh time
     assert app.job_queue is not None, "job_queue must be available (install python-telegram-bot[job-queue])"
-    app.job_queue.run_repeating(poll_job, interval=POLL_INTERVAL_SECONDS, first=10)
+    app.job_queue.run_daily(digest_job, time=dt_time(hour=5, minute=0, tzinfo=TIMEZONE))
+    app.job_queue.run_daily(digest_job, time=dt_time(hour=17, minute=0, tzinfo=TIMEZONE))
+
     logger.info(
-        "Bot running. Polling every %d min. Use /fetch for on-demand.",
-        POLL_INTERVAL_SECONDS // 60,
+        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). Use /fetch for on-demand."
     )
 
     # Python 3.12+ no longer auto-creates an event loop in the main thread
@@ -158,7 +165,7 @@ def main() -> None:
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

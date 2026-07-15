@@ -1,8 +1,11 @@
 """RSS feed fetching, title normalization, clustering, and urgency detection."""
 
+from __future__ import annotations
+
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any, Optional
 
 import feedparser
 
@@ -21,6 +24,11 @@ _STOP_WORDS: frozenset[str] = frozenset({
     "as", "at", "by", "from", "is", "are", "its", "it", "this", "that",
 })
 
+_IMG_SRC_RE = re.compile(
+    r'<img[^>]+src=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class Entry:
@@ -30,6 +38,49 @@ class Entry:
     summary: str
     link: str
     source_name: str
+    image_url: Optional[str] = None
+
+
+def extract_image_url(raw_entry: Any) -> Optional[str]:
+    """Pull an image URL from common RSS/Atom media fields, if present."""
+    media_content = getattr(raw_entry, "media_content", None) or raw_entry.get("media_content")
+    if media_content:
+        for item in media_content:
+            url = item.get("url") if isinstance(item, dict) else None
+            medium = (item.get("medium") or item.get("type") or "") if isinstance(item, dict) else ""
+            if url and (not medium or "image" in str(medium).lower() or str(medium).startswith("image/")):
+                return url
+            if url and str(url).lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
+                return url
+
+    media_thumbnail = getattr(raw_entry, "media_thumbnail", None) or raw_entry.get("media_thumbnail")
+    if media_thumbnail:
+        for item in media_thumbnail:
+            url = item.get("url") if isinstance(item, dict) else None
+            if url:
+                return url
+
+    enclosures = getattr(raw_entry, "enclosures", None) or raw_entry.get("enclosures") or []
+    for enc in enclosures:
+        href = enc.get("href") or enc.get("url") if isinstance(enc, dict) else None
+        enc_type = (enc.get("type") or "") if isinstance(enc, dict) else ""
+        if href and str(enc_type).startswith("image/"):
+            return href
+        if href and str(href).lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
+            return href
+
+    for field in ("summary", "description", "content"):
+        value = raw_entry.get(field) if hasattr(raw_entry, "get") else None
+        if value is None:
+            value = getattr(raw_entry, field, None)
+        if isinstance(value, list) and value:
+            value = value[0].get("value", "") if isinstance(value[0], dict) else str(value[0])
+        if isinstance(value, str):
+            match = _IMG_SRC_RE.search(value)
+            if match:
+                return match.group(1)
+
+    return None
 
 
 def _normalize_title(title: str) -> list[str]:
@@ -89,6 +140,7 @@ def collect_new_entries(posted_ids: set[str]) -> list[Entry]:
                     summary=(entry.get("summary", "") or "")[:500],
                     link=entry.link,
                     source_name=source_name,
+                    image_url=extract_image_url(entry),
                 ))
                 count += 1
         except Exception:

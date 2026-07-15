@@ -41,6 +41,8 @@ TIMEZONE = pytz.timezone("Asia/Phnom_Penh")
 # Default 20 min — override with POLL_INTERVAL_SECONDS in Railway/Render env vars.
 POLL_INTERVAL_SECONDS: int = int(os.environ.get("POLL_INTERVAL_SECONDS", "1200"))
 DIGEST_MIN_SOURCES: int = 2
+DIGEST_MAX_STORIES: int = 10
+URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 60  # once per hour
 
 # ---- Rate limiting ----
 MAX_URGENT_POSTS_PER_RUN: int = 5
@@ -50,7 +52,7 @@ URGENT_KEYWORDS: tuple[str, ...] = (
     "zero-day", "0-day", "critical vulnerability", "rce", "exploit",
     "data breach", "ransomware", "outage", "down globally", "major outage",
     "security incident", "product recall", "actively exploited",
-    "emergency patch", "widespread outage",
+    "emergency patch", "widespread outage", "breach", "cve", "downtime",
 )
 
 # ---- File paths ----
