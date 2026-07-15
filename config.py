@@ -28,6 +28,7 @@ RSS_FEEDS: list[str] = [
 ]
 MAX_ITEMS_PER_FEED: int = 5
 MAX_ENTRY_AGE_HOURS: int = 24
+FEED_TIMEOUT_SECONDS: int = 15
 
 # ---- Clustering ----
 CLUSTER_SIMILARITY_THRESHOLD: float = 0.45

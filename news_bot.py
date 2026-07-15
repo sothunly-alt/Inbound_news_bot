@@ -24,6 +24,7 @@ How people join:
 import asyncio
 import logging
 import threading
+import time as time_mod
 from datetime import time as dt_time
 
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
@@ -44,6 +45,10 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+# Rate limiting for /fetch command
+_FETCH_COOLDOWN_SECONDS: int = 300  # 5 minutes
+_fetch_last_run: dict[int, float] = {}  # chat_id -> timestamp
 
 
 async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -99,8 +104,19 @@ async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manual trigger: /fetch — runs a digest now and reports the outcome."""
     effective_chat = getattr(update, "effective_chat", None)
-    chat_id = effective_chat.id if effective_chat else "?"
+    chat_id = effective_chat.id if effective_chat else 0
+
+    # Rate limit: 5 min cooldown per chat
+    now = time_mod.time()
+    last_run = _fetch_last_run.get(chat_id, 0)
+    remaining = _FETCH_COOLDOWN_SECONDS - (now - last_run)
+    if remaining > 0:
+        minutes = int(remaining // 60) + 1
+        await _reply(update, f"Please wait {minutes} minute{'s' if minutes > 1 else ''} before requesting another fetch.")
+        return
+
     logger.info("[/fetch] from chat_id=%s", chat_id)
+    _fetch_last_run[chat_id] = now
     await _reply(update, "Fetching latest tech news...")
     try:
         posted_count = await fetch_and_post(context)

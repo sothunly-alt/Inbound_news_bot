@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
 from ai import collect_links, pick_image_url, rewrite_with_ai, trim_for_caption
@@ -67,11 +68,14 @@ async def broadcast_stories(
         return set()
 
     succeeded_ids: set[str] = set()
+    blocked_chats: set[int] = set()
 
     for post in stories:
         keyboard = _source_keyboard(post)
         story_ok = False
         for chat_id, thread_id in targets.items():
+            if chat_id in blocked_chats:
+                continue
             base: dict = {
                 "chat_id": chat_id,
                 "parse_mode": "HTML",
@@ -85,6 +89,17 @@ async def broadcast_stories(
                         await context.bot.send_photo(
                             photo=post.image_url,
                             caption=trim_for_caption(post.text),
+                            **base,
+                        )
+                    except Forbidden:
+                        logger.warning("Chat %s blocked the bot — will skip remaining stories", chat_id)
+                        blocked_chats.add(chat_id)
+                        continue
+                    except BadRequest:
+                        logger.warning("Photo failed for %s (bad request) — falling back to text", chat_id)
+                        await context.bot.send_message(
+                            text=post.text,
+                            disable_web_page_preview=True,
                             **base,
                         )
                     except Exception:
@@ -104,10 +119,22 @@ async def broadcast_stories(
                         **base,
                     )
                 story_ok = True
+            except Forbidden:
+                logger.warning("Chat %s blocked the bot — will skip remaining stories", chat_id)
+                blocked_chats.add(chat_id)
             except Exception:
                 logger.exception("Failed to send story to %s", chat_id)
         if story_ok:
             succeeded_ids.update(post.entry_ids)
+
+    # Auto-unsubscribe blocked chats
+    if blocked_chats:
+        state = get_state()
+        subscribers = state.load_subscribers()
+        removed = subscribers & blocked_chats
+        if removed:
+            state.save_subscribers(subscribers - blocked_chats)
+            logger.info("Auto-unsubscribed %d blocked chat(s): %s", len(removed), removed)
 
     return succeeded_ids
 

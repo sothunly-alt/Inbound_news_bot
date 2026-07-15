@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import re
 import time
@@ -14,6 +15,7 @@ import feedparser
 from config import (
     CLUSTER_SIMILARITY_THRESHOLD,
     CONTENT_DEDUP_THRESHOLD,
+    FEED_TIMEOUT_SECONDS,
     MAX_ENTRY_AGE_HOURS,
     MAX_ITEMS_PER_FEED,
     RSS_FEEDS,
@@ -168,7 +170,13 @@ def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = N
     entries: list[Entry] = []
     for feed_url in RSS_FEEDS:
         try:
-            feed = feedparser.parse(feed_url)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(feedparser.parse, feed_url)
+                try:
+                    feed = future.result(timeout=FEED_TIMEOUT_SECONDS)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("Feed %s timed out after %ds", feed_url, FEED_TIMEOUT_SECONDS)
+                    continue
             if feed.bozo and not feed.entries:
                 logger.warning("Feed %s returned an error: %s", feed_url, feed.bozo_exception)
                 continue

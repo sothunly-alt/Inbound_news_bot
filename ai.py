@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import re
+import time
 
 from config import (
     DIGEST_MIN_SOURCES,
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_TELEGRAM_LENGTH: int = 4000
 _CAPTION_MAX: int = 1024
+_MAX_RETRIES: int = 3
+_RETRY_BASE_DELAY: float = 1.0
 
 _REQUIRED_JSON_KEYS = ("urgency", "headline", "summary")
 
@@ -328,26 +331,44 @@ Rules:
 Stories covering the same event:
 {headlines}"""
 
-    try:
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        content = response.choices[0].message.content
-        if content is None:
-            raise ValueError("Groq API returned empty content")
-        raw_output = content.strip()
-    except Exception:
-        logger.exception("Groq API call failed for cluster starting with '%s'", cluster[0].title)
-        raise
+    raw_output = None
+    last_error = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = response.choices[0].message.content
+            if content is None:
+                raise ValueError("Groq API returned empty content")
+            raw_output = content.strip()
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt < _MAX_RETRIES:
+                delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    "Groq API attempt %d/%d failed (%s), retrying in %.1fs",
+                    attempt, _MAX_RETRIES, exc, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.exception(
+                    "Groq API failed after %d attempts for cluster starting with '%s'",
+                    _MAX_RETRIES, cluster[0].title,
+                )
 
     # Parse JSON from AI output
-    try:
-        data = _parse_ai_json(raw_output)
-    except ValueError:
-        logger.warning("Failed to parse AI output as JSON, using fallback. Raw: %.200s", raw_output)
+    if raw_output is None:
         data = _fallback_data(cluster, urgent)
+    else:
+        try:
+            data = _parse_ai_json(raw_output)
+        except ValueError:
+            logger.warning("Failed to parse AI output as JSON, using fallback. Raw: %.200s", raw_output)
+            data = _fallback_data(cluster, urgent)
 
     # Validate
     is_valid, reason = _validate_ai_data(data)
