@@ -5,8 +5,9 @@ stories, rewrites them with AI into a fixed Telegram format, and broadcasts
 to everyone who has messaged the bot with /start.
 
 Schedule:
-  - Digest posts at 5:00 AM and 5:00 PM (Phnom Penh time)
-  - Use /fetch for on-demand news
+  - Digest posts at 5:00 AM and 5:00 PM (Phnom Penh time) — up to 10 stories
+  - Urgent keyword check once per hour
+  - Use /fetch for on-demand digests
 
 Setup:
   pip install -r requirements.txt
@@ -27,14 +28,16 @@ from datetime import time as dt_time
 
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
-from bot import fetch_and_post, load_subscribers, save_subscribers
+from bot import fetch_and_post, fetch_urgent_and_post
 from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
     TIMEZONE,
+    URGENT_CHECK_INTERVAL_SECONDS,
 )
 from health import start_health_server
+from state import get_state
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -44,8 +47,13 @@ logger = logging.getLogger(__name__)
 
 
 async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled digest job — all new stories at 5 AM and 5 PM."""
+    """Scheduled digest job — up to 10 stories at 5 AM and 5 PM."""
     await fetch_and_post(context)
+
+
+async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hourly urgent check — keyword matches not already posted."""
+    await fetch_urgent_and_post(context)
 
 
 async def _reply(update: object, text: str) -> None:
@@ -57,17 +65,18 @@ async def _reply(update: object, text: str) -> None:
 
 async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Subscribe the current chat to future news broadcasts."""
-    subscribers = load_subscribers()
+    state = get_state()
+    subscribers = state.load_subscribers()
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else 0
     chat_title = (effective_chat.title or effective_chat.first_name or "unknown") if effective_chat else "unknown"
     logger.info("[/start] chat_id=%s  name=%s", chat_id, chat_title)
     if chat_id not in subscribers:
         subscribers.add(chat_id)
-        save_subscribers(subscribers)
+        state.save_subscribers(subscribers)
         await _reply(
             update,
-            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately.",
+            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent news is checked every hour.",
         )
     else:
         await _reply(update, "You're already subscribed.")
@@ -75,19 +84,20 @@ async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Unsubscribe from broadcasts."""
-    subscribers = load_subscribers()
+    state = get_state()
+    subscribers = state.load_subscribers()
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else 0
     if chat_id in subscribers:
         subscribers.discard(chat_id)
-        save_subscribers(subscribers)
+        state.save_subscribers(subscribers)
         await _reply(update, "Unsubscribed. Send /start anytime to rejoin.")
     else:
         await _reply(update, "You weren't subscribed.")
 
 
 async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Manual trigger: /fetch — runs a full digest now and reports the outcome."""
+    """Manual trigger: /fetch — runs a digest now and reports the outcome."""
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else "?"
     logger.info("[/fetch] from chat_id=%s", chat_id)
@@ -130,13 +140,20 @@ def main() -> None:
     else:
         logger.warning("TELEGRAM_CHANNEL_ID not set — only /start subscribers get posts.")
 
-    # Scheduled digests: 5:00 AM and 5:00 PM, Phnom Penh time
     assert app.job_queue is not None, "job_queue must be available (install python-telegram-bot[job-queue])"
+    # Scheduled digests: 5:00 AM and 5:00 PM, Phnom Penh time
     app.job_queue.run_daily(digest_job, time=dt_time(hour=5, minute=0, tzinfo=TIMEZONE))
     app.job_queue.run_daily(digest_job, time=dt_time(hour=17, minute=0, tzinfo=TIMEZONE))
+    # Urgent keyword scan once per hour
+    app.job_queue.run_repeating(
+        urgent_job,
+        interval=URGENT_CHECK_INTERVAL_SECONDS,
+        first=60,
+    )
 
     logger.info(
-        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). Use /fetch for on-demand."
+        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). "
+        "Urgent checks hourly. Use /fetch for on-demand."
     )
 
     # Python 3.12+ no longer auto-creates an event loop in the main thread
@@ -145,7 +162,7 @@ def main() -> None:
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

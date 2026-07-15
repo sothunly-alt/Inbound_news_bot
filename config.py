@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---- Redis (optional — enables persistent state on Railway/Render) ----
+REDIS_URL: str = os.environ.get("REDIS_URL", "").strip()
+
 # ---- RSS ----
 RSS_FEEDS: list[str] = [
     "https://techcrunch.com/feed/",
@@ -35,6 +38,8 @@ GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 # ---- Scheduling ----
 TIMEZONE = pytz.timezone("Asia/Phnom_Penh")
 DIGEST_MIN_SOURCES: int = 2
+DIGEST_MAX_STORIES: int = 10
+URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 60  # once per hour
 
 # ---- Rate limiting ----
 MAX_URGENT_POSTS_PER_RUN: int = 5
@@ -44,7 +49,7 @@ URGENT_KEYWORDS: tuple[str, ...] = (
     "zero-day", "0-day", "critical vulnerability", "rce", "exploit",
     "data breach", "ransomware", "outage", "down globally", "major outage",
     "security incident", "product recall", "actively exploited",
-    "emergency patch", "widespread outage",
+    "emergency patch", "widespread outage", "breach", "cve", "downtime",
 )
 
 # ---- File paths ----
@@ -52,6 +57,11 @@ POSTED_LOG: str = "posted_ids.json"
 SUBSCRIBERS_LOG: str = "subscribers.json"
 
 # ---- Telegram ----
+_REQUIRED_VARS = ["TELEGRAM_BOT_TOKEN", "GROQ_API_KEY"]
+_missing = [v for v in _REQUIRED_VARS if not os.environ.get(v)]
+if _missing:
+    raise SystemExit(f"Missing required env vars: {', '.join(_missing)}. Set them in Railway → Variables tab.")
+
 TELEGRAM_BOT_TOKEN: str = os.environ["TELEGRAM_BOT_TOKEN"]
 PORT: int = int(os.environ.get("PORT", "10000"))
 
