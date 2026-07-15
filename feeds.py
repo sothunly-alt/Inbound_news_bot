@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from calendar import timegm
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -12,6 +14,7 @@ import feedparser
 from config import (
     CLUSTER_SIMILARITY_THRESHOLD,
     CONTENT_DEDUP_THRESHOLD,
+    MAX_ENTRY_AGE_HOURS,
     MAX_ITEMS_PER_FEED,
     RSS_FEEDS,
     URGENT_KEYWORDS,
@@ -29,6 +32,23 @@ _IMG_SRC_RE = re.compile(
     r'<img[^>]+src=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
+
+
+def _is_entry_too_old(raw_entry: Any, max_age_hours: int = MAX_ENTRY_AGE_HOURS) -> bool:
+    """Check if an RSS entry is older than max_age_hours.
+
+    Tries published_parsed first, then updated_parsed.
+    Returns False (not too old) if no timestamp is available.
+    """
+    parsed = getattr(raw_entry, "published_parsed", None) or getattr(raw_entry, "updated_parsed", None)
+    if parsed is None:
+        return False
+    try:
+        entry_ts = timegm(parsed)
+        age_seconds = time.time() - entry_ts
+        return age_seconds > max_age_hours * 3600
+    except (TypeError, ValueError):
+        return False
 
 
 @dataclass
@@ -159,6 +179,9 @@ def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = N
                     break
                 entry_id: str = entry.get("id", entry.link)
                 if entry_id in posted_ids:
+                    continue
+                if _is_entry_too_old(entry):
+                    logger.debug("Skipping stale entry: %s", entry.get("title", ""))
                     continue
                 title = entry.get("title", "").strip()
                 if _is_title_duplicate(title, posted_titles):
