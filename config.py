@@ -30,6 +30,7 @@ MAX_ITEMS_PER_FEED: int = 5
 
 # ---- Clustering ----
 CLUSTER_SIMILARITY_THRESHOLD: float = 0.45
+CONTENT_DEDUP_THRESHOLD: float = 0.65
 
 # ---- AI ----
 GROQ_MODEL: str = "llama-3.3-70b-versatile"
@@ -38,6 +39,8 @@ GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 # ---- Scheduling ----
 TIMEZONE = pytz.timezone("Asia/Phnom_Penh")
 DIGEST_MIN_SOURCES: int = 2
+DIGEST_MAX_STORIES: int = 10
+URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 60  # once per hour
 
 # ---- Rate limiting ----
 MAX_URGENT_POSTS_PER_RUN: int = 5
@@ -47,7 +50,7 @@ URGENT_KEYWORDS: tuple[str, ...] = (
     "zero-day", "0-day", "critical vulnerability", "rce", "exploit",
     "data breach", "ransomware", "outage", "down globally", "major outage",
     "security incident", "product recall", "actively exploited",
-    "emergency patch", "widespread outage",
+    "emergency patch", "widespread outage", "breach", "cve", "downtime",
 )
 
 # ---- File paths ----

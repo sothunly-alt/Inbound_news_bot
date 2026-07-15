@@ -11,6 +11,7 @@ from feeds import (
     _summary_similarity,
     _title_similarity,
     cluster_entries,
+    extract_image_url,
     looks_urgent,
 )
 
@@ -112,6 +113,27 @@ class TestClusterEntries:
         # First cluster should have the two related stories
         assert any(len(c) == 2 for c in clusters)
         assert any(len(c) == 1 for c in clusters)
+
+
+class TestExtractImageUrl:
+    def test_media_content(self):
+        raw = {"media_content": [{"url": "https://cdn.example.com/a.jpg", "medium": "image"}]}
+        assert extract_image_url(raw) == "https://cdn.example.com/a.jpg"
+
+    def test_media_thumbnail(self):
+        raw = {"media_thumbnail": [{"url": "https://cdn.example.com/thumb.png"}]}
+        assert extract_image_url(raw) == "https://cdn.example.com/thumb.png"
+
+    def test_enclosure_image(self):
+        raw = {"enclosures": [{"href": "https://cdn.example.com/e.webp", "type": "image/webp"}]}
+        assert extract_image_url(raw) == "https://cdn.example.com/e.webp"
+
+    def test_img_in_summary(self):
+        raw = {"summary": '<p>Hi <img src="https://cdn.example.com/from-html.jpg" /></p>'}
+        assert extract_image_url(raw) == "https://cdn.example.com/from-html.jpg"
+
+    def test_no_image(self):
+        assert extract_image_url({"summary": "no image here"}) is None
 
 
 class TestLooksUrgent:

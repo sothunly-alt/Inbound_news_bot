@@ -1,5 +1,8 @@
 """AI-powered story rewriting via Groq API with output validation."""
 
+from __future__ import annotations
+
+import html
 import logging
 import re
 
@@ -20,6 +23,7 @@ _FORBIDDEN_PATTERNS: list[re.Pattern[str]] = [
 
 # Max content length for a Telegram message (Telegram limit: 4096)
 _MAX_TELEGRAM_LENGTH: int = 4000
+_CAPTION_MAX: int = 1024
 
 
 def _validate_output(text: str) -> tuple[bool, str | None]:
@@ -41,20 +45,72 @@ def _validate_output(text: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def rewrite_with_ai(cluster: list[Entry], urgent: bool = False) -> str:
-    """Produce a deterministic Telegram post from a cluster of entries.
+def _md_bold_to_html(text: str) -> str:
+    """Convert **bold** markers to Telegram HTML <b> tags; escape the rest."""
+    parts: list[str] = []
+    i = 0
+    while i < len(text):
+        start = text.find("**", i)
+        if start == -1:
+            parts.append(html.escape(text[i:]))
+            break
+        parts.append(html.escape(text[i:start]))
+        end = text.find("**", start + 2)
+        if end == -1:
+            parts.append(html.escape(text[start:]))
+            break
+        parts.append(f"<b>{html.escape(text[start + 2:end])}</b>")
+        i = end + 2
+    return "".join(parts)
 
-    Source links are appended in code so the model cannot invent or omit them.
-    Validates output before returning — raises ValueError if validation fails.
-    """
+
+def format_story_html(body_md: str, header: str | None = None) -> str:
+    """Build a message with blank lines around a bold title (visual centerpiece)."""
+    body = re.sub(r"\n+-?\s*Sources?:.*$", "", body_md, flags=re.IGNORECASE | re.DOTALL).strip()
+    body_html = _md_bold_to_html(body)
+    # Ensure title stands alone with spacing
+    body_html = re.sub(r"(<b>.*?</b>)\n*", r"\1\n\n", body_html, count=1, flags=re.DOTALL)
+    parts: list[str] = []
+    if header:
+        parts.append(html.escape(header))
+        parts.append("")
+    parts.append(body_html.strip())
+    return "\n".join(parts).strip()
+
+
+def trim_for_caption(text: str, limit: int = _CAPTION_MAX) -> str:
+    """Trim HTML caption to Telegram's photo caption limit."""
+    if len(text) <= limit:
+        return text
+    truncated = text[: limit - 1].rsplit("\n", 1)[0]
+    if len(truncated) < limit // 2:
+        truncated = text[: limit - 1]
+    return truncated.rstrip() + "…"
+
+
+def collect_links(cluster: list[Entry], urgent: bool = False) -> list[str]:
+    """Unique article links from a cluster (capped)."""
     links: list[str] = []
     seen: set[str] = set()
     for entry in cluster:
         if entry.link not in seen:
             seen.add(entry.link)
             links.append(entry.link)
+    return links[:3] if urgent else links[:5]
 
-    # Prefer more sources for stories; still allow single-source
+
+def pick_image_url(cluster: list[Entry]) -> str | None:
+    """First available image URL from the cluster."""
+    for entry in cluster:
+        if entry.image_url:
+            return entry.image_url
+    return None
+
+
+def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | None = None) -> str:
+    """Produce Telegram HTML body (title + bullets). No source links in text."""
+    links = collect_links(cluster, urgent=urgent)
+
     source_note = ""
     if len(links) < DIGEST_MIN_SOURCES:
         source_note = (

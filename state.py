@@ -11,11 +11,12 @@ from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
-# Posted IDs expire after 7 days to prevent unbounded growth.
-POSTED_ID_TTL_SECONDS: int = 7 * 24 * 60 * 60
+# Posted IDs expire after 30 days to prevent unbounded growth.
+POSTED_ID_TTL_SECONDS: int = 30 * 24 * 60 * 60
 
 _SUBSCRIBERS_KEY = "newsbot:subscribers"
 _POSTED_ID_PREFIX = "newsbot:posted:"
+_POSTED_TITLE_PREFIX = "newsbot:posted_title:"
 
 
 class StateBackend(ABC):
@@ -39,6 +40,18 @@ class StateBackend(ABC):
 
     @abstractmethod
     def add_posted_ids(self, ids: set[str]) -> None:
+        ...
+
+    @abstractmethod
+    def load_posted_titles(self) -> set[str]:
+        ...
+
+    @abstractmethod
+    def save_posted_titles(self, titles: set[str]) -> None:
+        ...
+
+    @abstractmethod
+    def add_posted_titles(self, titles: set[str]) -> None:
         ...
 
 
@@ -93,6 +106,36 @@ class RedisState(StateBackend):
             pipe.set(f"{_POSTED_ID_PREFIX}{entry_id}", "1", ex=POSTED_ID_TTL_SECONDS)
         pipe.execute()
 
+    def load_posted_titles(self) -> set[str]:
+        posted: set[str] = set()
+        cursor = 0
+        while True:
+            cursor, keys = self._r.scan(cursor, match=f"{_POSTED_TITLE_PREFIX}*", count=200)
+            for key in keys:
+                posted.add(key[len(_POSTED_TITLE_PREFIX):])
+            if cursor == 0:
+                break
+        return posted
+
+    def save_posted_titles(self, titles: set[str]) -> None:
+        pipe = self._r.pipeline()
+        cursor = 0
+        while True:
+            cursor, keys = self._r.scan(cursor, match=f"{_POSTED_TITLE_PREFIX}*", count=200)
+            if keys:
+                pipe.delete(*keys)
+            if cursor == 0:
+                break
+        for title in titles:
+            pipe.set(f"{_POSTED_TITLE_PREFIX}{title}", "1", ex=POSTED_ID_TTL_SECONDS)
+        pipe.execute()
+
+    def add_posted_titles(self, titles: set[str]) -> None:
+        pipe = self._r.pipeline()
+        for title in titles:
+            pipe.set(f"{_POSTED_TITLE_PREFIX}{title}", "1", ex=POSTED_ID_TTL_SECONDS)
+        pipe.execute()
+
 
 class FileState(StateBackend):
     """Local JSON file state — for development and non-Redis deployments."""
@@ -137,6 +180,29 @@ class FileState(StateBackend):
         existing = self.load_posted_ids()
         existing.update(ids)
         self.save_posted_ids(existing)
+
+    def load_posted_titles(self) -> set[str]:
+        path = self._posted_path.replace(".json", "_titles.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return set(json.load(f))
+            except (json.JSONDecodeError, OSError):
+                logger.exception("Failed to load %s", path)
+        return set()
+
+    def save_posted_titles(self, titles: set[str]) -> None:
+        path = self._posted_path.replace(".json", "_titles.json")
+        try:
+            with open(path, "w") as f:
+                json.dump(list(titles), f)
+        except OSError:
+            logger.exception("Failed to save %s", path)
+
+    def add_posted_titles(self, titles: set[str]) -> None:
+        existing = self.load_posted_titles()
+        existing.update(titles)
+        self.save_posted_titles(existing)
 
 
 _state: StateBackend | None = None

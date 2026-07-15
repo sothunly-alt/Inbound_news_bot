@@ -16,6 +16,7 @@ jobs:
           TELEGRAM_NOTIFY_THREAD_ID: ${{ secrets.TELEGRAM_NOTIFY_THREAD_ID }}
         shell: python
         run: |
+          import html
           import os
           import json
           import urllib.error
@@ -38,6 +39,13 @@ jobs:
           cambodia_tz = timezone(timedelta(hours=7))
           commit_time = datetime.now(cambodia_tz).strftime("%H:%M:%S")
           repo_name = payload.get("repository", {}).get("name", "Unknown Repo")
+          repo_url = payload.get("repository", {}).get("html_url", "")
+
+          def esc(value: object) -> str:
+              return html.escape(str(value), quote=False)
+
+          button_text = "Open repo"
+          button_url = repo_url
 
           if event_name == "pull_request":
               pr = payload.get("pull_request", {})
@@ -47,22 +55,24 @@ jobs:
               author = (pr.get("user") or {}).get("login", "Someone")
               base = (pr.get("base") or {}).get("ref", "?")
               head = (pr.get("head") or {}).get("ref", "?")
-              pr_url = pr.get("html_url", "")
+              pr_url = pr.get("html_url", "") or repo_url
 
-              message = f"🔀 *PR {action} — {repo_name}*\n"
-              message += f"📌 *#{number}:* {title}\n"
-              message += f"👤 *By:* {author}\n"
-              message += f"🌿 *{head} → {base}*\n"
-              if pr_url:
-                  message += f"🔗 {pr_url}\n"
-              message += f"\n🕒 *Time:* {commit_time}"
+              message = f"<b>PR {esc(action)} — {esc(repo_name)}</b>\n\n"
+              message += f"Branch: {esc(head)} → {esc(base)}\n"
+              message += f"By: {esc(author)}\n\n"
+              message += f"#{esc(number)}: {esc(title)}\n"
+              message += f"\nTime: {esc(commit_time)}"
+              button_text = "Open PR"
+              button_url = pr_url
           else:
               pusher = payload.get("pusher", {}).get("name", "Someone")
               ref = payload.get("ref", "refs/heads/main").split("/")[-1]
+              compare_url = payload.get("compare") or repo_url
 
-              message = f"🚀 *New Push to {repo_name} {ref}*\n"
-              message += f"👤 *By:* {pusher}\n\n"
-              message += "📝 *Commits:*\n"
+              message = f"<b>New push to {esc(repo_name)}</b>\n\n"
+              message += f"Branch: {esc(ref)}\n"
+              message += f"By: {esc(pusher)}\n\n"
+              message += "Commits:\n"
 
               commits = payload.get("commits", [])[:5]
               if not commits:
@@ -70,22 +80,33 @@ jobs:
               for commit in commits:
                   msg = commit.get("message", "No message").split("\n")[0]
                   author = commit.get("author", {}).get("name", "Unknown")
-                  message += f"• {msg} (- {author})\n"
+                  message += f"• {esc(msg)} (- {esc(author)})\n"
 
-              message += f"\n🕒 *Time:* {commit_time}"
+              message += f"\nTime: {esc(commit_time)}"
+              button_text = "Compare" if payload.get("compare") else "Open repo"
+              button_url = compare_url
 
-          url = f"https://api.telegram.org/bot{token}/sendMessage"
+          if not button_url:
+              print("Error: No URL available for inline button.")
+              raise SystemExit(1)
+
+          api_url = f"https://api.telegram.org/bot{token}/sendMessage"
           body = {
               "chat_id": chat_id,
               "text": message,
-              "parse_mode": "Markdown",
+              "parse_mode": "HTML",
               "disable_web_page_preview": True,
+              "reply_markup": {
+                  "inline_keyboard": [[
+                      {"text": button_text, "url": button_url}
+                  ]]
+              },
           }
           if thread_id:
               body["message_thread_id"] = int(thread_id)
 
           req = urllib.request.Request(
-              url,
+              api_url,
               data=json.dumps(body).encode("utf-8"),
               headers={"Content-Type": "application/json"},
               method="POST",

@@ -1,6 +1,8 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env
 subscribers.json
 posted_ids.json
+posted_titles.json
