@@ -15,9 +15,44 @@ from state import get_state
 
 logger = logging.getLogger(__name__)
 
+TELEGRAM_MAX_LEN = 4096
+
+
+def _chunk_text(text: str, limit: int = TELEGRAM_MAX_LEN) -> list[str]:
+    """Split text into <= limit-character chunks, breaking on newlines when possible.
+
+    A single AI-rewritten story should almost never exceed 4096 chars, but
+    this keeps a freak long post from failing outright instead of silently
+    not sending.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            if current:
+                chunks.append(current)
+            if len(line) > limit:
+                for i in range(0, len(line), limit):
+                    chunks.append(line[i : i + limit])
+                current = ""
+            else:
+                current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
 
 async def broadcast(context: ContextTypes.DEFAULT_TYPE, posts: list[str]) -> int:
     """Send posts to the configured channel (if any) plus /start subscribers.
+
+    Each post is chunked individually if it exceeds Telegram's 4096-char
+    limit, so one long story never breaks the whole send.
 
     Returns the number of chat targets that successfully received *all*
     posts, so callers can tell real delivery apart from a silent no-op.
@@ -38,14 +73,15 @@ async def broadcast(context: ContextTypes.DEFAULT_TYPE, posts: list[str]) -> int
     for chat_id, thread_id in targets.items():
         ok = True
         for post_text in posts:
-            kwargs: dict = {"chat_id": chat_id, "text": post_text}
-            if thread_id is not None:
-                kwargs["message_thread_id"] = thread_id
-            try:
-                await context.bot.send_message(**kwargs)
-            except Exception:
-                logger.exception("Failed to send to %s", chat_id)
-                ok = False
+            for chunk in _chunk_text(post_text):
+                kwargs: dict = {"chat_id": chat_id, "text": chunk}
+                if thread_id is not None:
+                    kwargs["message_thread_id"] = thread_id
+                try:
+                    await context.bot.send_message(**kwargs)
+                except Exception:
+                    logger.exception("Failed to send to %s", chat_id)
+                    ok = False
         if ok:
             delivered += 1
 
@@ -58,15 +94,11 @@ async def broadcast(context: ContextTypes.DEFAULT_TYPE, posts: list[str]) -> int
 async def fetch_and_post(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    """Fetch feeds, cluster, rewrite, and broadcast.
+    """Fetch feeds, cluster, rewrite, and post each story individually
+    as soon as it's ready — no digest bundling, no waiting to batch.
 
-    All clusters are processed. Urgent stories get the [URGENT: ...] prefix.
-    Everything is bundled into a single digest message.
-
-    Returns the number of individual stories actually posted (0 if there
-    was nothing new, or nothing could be turned into a post), so callers
-    like the /fetch command can tell "ran fine, nothing new" apart from
-    "posted N stories" instead of staying silent either way.
+    Returns the number of stories actually delivered this run (0 if
+    nothing new), so callers like /fetch can report an accurate count.
     """
     state = get_state()
     posted_ids = state.load_posted_ids()
@@ -76,41 +108,40 @@ async def fetch_and_post(
         return 0
 
     clusters = cluster_entries(entries)
-    new_posts: list[str] = []
+    posted_count = 0
 
     for cluster in clusters:
         urgent = looks_urgent(cluster)
+        title = cluster[0].title if cluster else "?"
+
         try:
             post_text = rewrite_with_ai(cluster, urgent=urgent)
-            new_posts.append(post_text)
-            for entry in cluster:
-                posted_ids.add(entry.id)
         except Exception:
-            title = cluster[0].title if cluster else "?"
             logger.exception("Failed to generate post for '%s'", title)
+            continue
 
-    if not new_posts:
-        logger.info("No posts generated this run.")
-        return 0
+        delivered = await broadcast(context, [post_text])
+        if delivered == 0:
+            logger.error("Generated post for '%s' but delivered to 0 chats.", title)
+            # Don't mark as posted — retry this story next poll instead
+            # of losing it silently.
+            continue
 
-    if len(new_posts) > 1:
-        header = f"Tech digest — {len(new_posts)} stories\n\n"
-        digest = header + "\n\n———\n\n".join(new_posts)
-        delivered = await broadcast(context, [digest])
+        for entry in cluster:
+            posted_ids.add(entry.id)
+        posted_count += 1
+
+        # Save after every successful post, not just at the end — if the
+        # process dies mid-run, already-delivered stories stay marked done.
+        state.save_posted_ids(posted_ids)
+
+    if posted_count == 0:
+        logger.info("No posts delivered this run.")
     else:
-        delivered = await broadcast(context, new_posts)
-
-    if delivered == 0:
-        logger.error(
-            "Generated %d post(s) but delivered to 0 chats — "
-            "check TELEGRAM_CHANNEL_ID / subscribers / bot permissions.",
-            len(new_posts),
+        logger.info(
+            "Posted %d individual stor%s this run.",
+            posted_count,
+            "y" if posted_count == 1 else "ies",
         )
-        # Don't mark these as posted — we'll retry delivery next run
-        # instead of silently losing the stories. -1 signals "generated
-        # but delivery failed", distinct from 0 ("nothing new").
-        return -1
 
-    state.save_posted_ids(posted_ids)
-    logger.info("Sent %d post(s) to %d chat(s).", len(new_posts), delivered)
-    return len(new_posts)
+    return posted_count

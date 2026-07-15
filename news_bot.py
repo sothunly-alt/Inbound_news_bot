@@ -1,38 +1,39 @@
-"""Telegram Tech News Bot - v3
+"""Telegram Tech News Bot - v4
 
 Fetches tech RSS headlines from multiple trusted sources, clusters related
-stories, rewrites them with AI into a fixed Telegram format, and broadcasts
-to everyone who has messaged the bot with /start.
+stories, rewrites them with AI into a fixed Telegram format, and posts each
+new story individually as soon as it's found — no fixed schedule, no
+digest bundling.
 
 Schedule:
-  - Digest posts at 5:00 AM and 5:00 PM (Phnom Penh time)
-  - Use /fetch for on-demand news
+- Polls every POLL_INTERVAL_SECONDS (default 20 min)
+- Use /fetch for an on-demand check
 
 Setup:
-  pip install -r requirements.txt
+    pip install -r requirements.txt
 
 Env vars needed — create a .env file in this folder (see .env.example):
-  TELEGRAM_BOT_TOKEN   - from @BotFather
-  GROQ_API_KEY         - your Groq API key (console.groq.com/keys, free tier)
+    TELEGRAM_BOT_TOKEN     - from @BotFather
+    GROQ_API_KEY           - your Groq API key (console.groq.com/keys, free tier)
+    POLL_INTERVAL_SECONDS  - optional, seconds between polls (default 1200 = 20 min)
 
 How people join:
-  Anyone sends /start to the bot once. They're saved to subscribers.json
-  and get every future news post automatically. /stop unsubscribes.
+    Anyone sends /start to the bot once. They're saved to subscribers.json
+    and get every future news post automatically. /stop unsubscribes.
 """
 
 import asyncio
 import logging
 import threading
-from datetime import time as dt_time
 
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
 from bot import fetch_and_post
 from config import (
+    POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
-    TIMEZONE,
 )
 from health import start_health_server
 from state import get_state
@@ -41,11 +42,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     level=logging.INFO,
 )
+# httpx logs the full request URL at INFO level, which includes the bot
+# token (api.telegram.org/bot<TOKEN>/...). Silence it so the token never
+# ends up in logs again.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
-async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled digest job — all new stories at 5 AM and 5 PM."""
+async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Recurring poll — posts whatever's new since last check, even if it's just 1 story."""
     await fetch_and_post(context)
 
 
@@ -63,13 +69,14 @@ async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else 0
     chat_title = (effective_chat.title or effective_chat.first_name or "unknown") if effective_chat else "unknown"
-    logger.info("[/start] chat_id=%s  name=%s", chat_id, chat_title)
+    logger.info("[/start] chat_id=%s name=%s", chat_id, chat_title)
+
     if chat_id not in subscribers:
         subscribers.add(chat_id)
         state.save_subscribers(subscribers)
         await _reply(
             update,
-            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately.",
+            "Subscribed! You'll get news as soon as it's found — no fixed schedule anymore.",
         )
     else:
         await _reply(update, "You're already subscribed.")
@@ -81,6 +88,7 @@ async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
     subscribers = state.load_subscribers()
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else 0
+
     if chat_id in subscribers:
         subscribers.discard(chat_id)
         state.save_subscribers(subscribers)
@@ -90,11 +98,13 @@ async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Manual trigger: /fetch — runs a full digest now and reports the outcome."""
+    """Manual trigger: /fetch — checks feeds now and reports the outcome."""
     effective_chat = getattr(update, "effective_chat", None)
     chat_id = effective_chat.id if effective_chat else "?"
     logger.info("[/fetch] from chat_id=%s", chat_id)
+
     await _reply(update, "Fetching latest tech news...")
+
     try:
         posted_count = await fetch_and_post(context)
     except Exception:
@@ -104,12 +114,6 @@ async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if posted_count == 0:
         await _reply(update, "No new updates right now — checked all feeds, nothing new to post.")
-    elif posted_count == -1:
-        await _reply(
-            update,
-            "Generated new stories but couldn't deliver them — "
-            "check TELEGRAM_CHANNEL_ID and bot permissions, then try again.",
-        )
     else:
         await _reply(update, f"Posted {posted_count} new stor{'y' if posted_count == 1 else 'ies'}.")
 
@@ -126,6 +130,7 @@ def main() -> None:
     threading.Thread(target=start_health_server, daemon=True).start()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
     _add_command(app, "start", start_command)
     _add_command(app, "stop", stop_command)
     _add_command(app, "fetch", fetch_command)
@@ -139,13 +144,12 @@ def main() -> None:
     else:
         logger.warning("TELEGRAM_CHANNEL_ID not set — only /start subscribers get posts.")
 
-    # Scheduled digests: 5:00 AM and 5:00 PM, Phnom Penh time
+    # Continuous polling — posts as soon as new stories are found, no fixed schedule.
     assert app.job_queue is not None, "job_queue must be available (install python-telegram-bot[job-queue])"
-    app.job_queue.run_daily(digest_job, time=dt_time(hour=5, minute=0, tzinfo=TIMEZONE))
-    app.job_queue.run_daily(digest_job, time=dt_time(hour=17, minute=0, tzinfo=TIMEZONE))
-
+    app.job_queue.run_repeating(poll_job, interval=POLL_INTERVAL_SECONDS, first=10)
     logger.info(
-        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). Use /fetch for on-demand."
+        "Bot running. Polling every %d min. Use /fetch for on-demand.",
+        POLL_INTERVAL_SECONDS // 60,
     )
 
     # Python 3.12+ no longer auto-creates an event loop in the main thread

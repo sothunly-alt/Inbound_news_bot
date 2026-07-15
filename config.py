@@ -23,9 +23,9 @@ RSS_FEEDS: list[str] = [
     "https://krebsonsecurity.com/feed/",
     "https://techfundingnews.com/feed/",
     "https://techstartups.com/feed/",
-    "https://www.technologyreview.com/feed/"
-
+    "https://www.technologyreview.com/feed/",
 ]
+
 MAX_ITEMS_PER_FEED: int = 5
 
 # ---- Clustering ----
@@ -37,6 +37,9 @@ GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 
 # ---- Scheduling ----
 TIMEZONE = pytz.timezone("Asia/Phnom_Penh")
+# Continuous polling interval (replaces the old fixed 5am/5pm digest).
+# Default 20 min — override with POLL_INTERVAL_SECONDS in Railway/Render env vars.
+POLL_INTERVAL_SECONDS: int = int(os.environ.get("POLL_INTERVAL_SECONDS", "1200"))
 DIGEST_MIN_SOURCES: int = 2
 
 # ---- Rate limiting ----
@@ -65,6 +68,7 @@ PORT: int = int(os.environ.get("PORT", "10000"))
 
 _CHANNEL_RAW: str = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
 TELEGRAM_CHANNEL_ID: Optional[int] = int(_CHANNEL_RAW) if _CHANNEL_RAW else None
+
 _THREAD_RAW: str = os.environ.get("TELEGRAM_THREAD_ID", "").strip()
 TELEGRAM_THREAD_ID: Optional[int] = int(_THREAD_RAW) if _THREAD_RAW else None
 
