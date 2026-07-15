@@ -54,6 +54,9 @@ URGENT_KEYWORDS: tuple[str, ...] = (
     "emergency patch", "widespread outage", "breach", "cve", "downtime",
 )
 
+# ---- Template urgency levels ----
+URGENCY_LEVELS: tuple[str, ...] = ("breaking", "alert", "analysis", "market", "explainer")
+
 # ---- File paths ----
 POSTED_LOG: str = "posted_ids.json"
 SUBSCRIBERS_LOG: str = "subscribers.json"

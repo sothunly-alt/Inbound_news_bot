@@ -83,14 +83,13 @@ class TestPrepareDigest:
         ]
 
         def fake_rewrite(cluster, urgent=False, header=None):
-            prefix = f"{header}\n\n" if header else ""
-            return f"{prefix}<b>{cluster[0].title}</b>\n\n▸ What happened: x"
+            return f"<b>{cluster[0].title}</b>\n\nWhat happened: x"
 
         with patch("bot.rewrite_with_ai", side_effect=fake_rewrite) as mock_ai:
             stories = _prepare_digest()
         assert len(stories) == 10
         assert all(isinstance(s, StoryPost) for s in stories)
-        assert "📰 1/10" in stories[0].text
+        assert "<b>T0</b>" in stories[0].text
         assert all("———" not in s.text for s in stories)
         assert mock_ai.call_count == 10
 
