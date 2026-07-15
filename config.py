@@ -13,18 +13,29 @@ REDIS_URL: str = os.environ.get("REDIS_URL", "").strip()
 
 # ---- RSS ----
 RSS_FEEDS: list[str] = [
+    # Startups
     "https://techcrunch.com/feed/",
+    "https://techfundingnews.com/feed/",
+    "https://techstartups.com/feed/",
+    # AI & ML
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    # Cybersecurity
+    "https://www.bleepingcomputer.com/feed/",
+    "https://krebsonsecurity.com/feed/",
+    # DeFi & Crypto
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    # Hardware
+    "https://www.tomshardware.com/feeds/all",
+    # Regulation
+    "https://techpolicy.press/rss/feed.xml",
+    # Science
+    "https://www.sciencedaily.com/rss/top/technology.xml",
+    # General Tech
     "https://www.theverge.com/rss/index.xml",
     "https://feeds.arstechnica.com/arstechnica/index",
     "https://www.wired.com/feed/rss",
     "https://www.theguardian.com/technology/rss",
-    "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "https://www.bleepingcomputer.com/feed/",
-    "https://krebsonsecurity.com/feed/",
-    "https://techfundingnews.com/feed/",
-    "https://techstartups.com/feed/",
-    "https://www.technologyreview.com/feed/"
-
+    "https://www.technologyreview.com/feed/",
 ]
 MAX_ITEMS_PER_FEED: int = 5
 MAX_ENTRY_AGE_HOURS: int = 24
@@ -57,6 +68,12 @@ URGENT_KEYWORDS: tuple[str, ...] = (
 
 # ---- Template urgency levels ----
 URGENCY_LEVELS: tuple[str, ...] = ("breaking", "alert", "analysis", "market", "explainer")
+
+# ---- News categories ----
+NEWS_CATEGORIES: tuple[str, ...] = (
+    "startups", "ai", "cybersecurity", "defi",
+    "big_tech", "hardware", "science", "regulation",
+)
 
 # ---- File paths ----
 POSTED_LOG: str = "posted_ids.json"

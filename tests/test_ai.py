@@ -55,7 +55,7 @@ class TestParseAiJson:
 
 class TestValidateAiData:
     def test_valid_data(self):
-        data = {"urgency": "analysis", "headline": "Test", "summary": "Sum"}
+        data = {"urgency": "analysis", "category": "ai", "headline": "Test", "summary": "Sum"}
         is_valid, reason = _validate_ai_data(data)
         assert is_valid is True
         assert reason is None
@@ -79,13 +79,25 @@ class TestValidateAiData:
         assert "headline" in reason
 
     def test_invalid_urgency(self):
-        data = {"urgency": "invalid", "headline": "Test", "summary": "Sum"}
+        data = {"urgency": "invalid", "headline": "Test", "summary": "Sum", "category": "ai"}
         is_valid, reason = _validate_ai_data(data)
         assert is_valid is False
         assert "urgency" in reason
 
+    def test_invalid_category(self):
+        data = {"urgency": "analysis", "headline": "Test", "summary": "Sum", "category": "invalid"}
+        is_valid, reason = _validate_ai_data(data)
+        assert is_valid is False
+        assert "category" in reason
+
+    def test_missing_category(self):
+        data = {"urgency": "analysis", "headline": "Test", "summary": "Sum"}
+        is_valid, reason = _validate_ai_data(data)
+        assert is_valid is False
+        assert "category" in reason
+
     def test_non_list_key_points(self):
-        data = {"urgency": "analysis", "headline": "Test", "summary": "Sum", "key_points": "not a list"}
+        data = {"urgency": "analysis", "category": "ai", "headline": "Test", "summary": "Sum", "key_points": "not a list"}
         is_valid, reason = _validate_ai_data(data)
         assert is_valid is False
         assert "key_points" in reason
@@ -97,6 +109,7 @@ class TestRenderTemplate:
     def test_breaking_template(self):
         data = {
             "urgency": "breaking",
+            "category": "cybersecurity",
             "headline": "Major Exploit",
             "summary": "Protocol hacked for $10M.",
             "key_points": ["Flash loan used", "Oracle manipulated"],
@@ -109,6 +122,7 @@ class TestRenderTemplate:
         result = render_template(data)
         assert "🚨 CRITICAL:" in result
         assert "<b>Major Exploit</b>" in result
+        assert "📂 Cybersecurity" in result
         assert "Protocol hacked" in result
         assert "📊 KEY METRICS:" in result
         assert "Loss: $10M" in result
@@ -123,6 +137,7 @@ class TestRenderTemplate:
     def test_alert_template(self):
         data = {
             "urgency": "alert",
+            "category": "cybersecurity",
             "headline": "Vulnerability in Compound V2",
             "summary": "Medium-severity bug disclosed.",
             "what_to_do": ["Check positions", "De-risk if needed"],
@@ -144,6 +159,7 @@ class TestRenderTemplate:
     def test_analysis_template(self):
         data = {
             "urgency": "analysis",
+            "category": "regulation",
             "headline": "SEC Proposes DeFi Framework",
             "summary": "New guidance on governance tokens.",
             "key_points": ["Governance tokens may be securities", "2-year safe harbor"],
@@ -166,6 +182,7 @@ class TestRenderTemplate:
     def test_market_template(self):
         data = {
             "urgency": "market",
+            "category": "defi",
             "headline": "BTC Breaks $65K",
             "summary": "Bitcoin surges on ETF inflows.",
             "key_points": ["Current: $65,420", "+3.2% 24h"],
@@ -183,6 +200,7 @@ class TestRenderTemplate:
     def test_explainer_template(self):
         data = {
             "urgency": "explainer",
+            "category": "defi",
             "headline": "How Oracle Attacks Work",
             "summary": "DeFi relies on price feeds attackers can manipulate.",
             "key_points": ["Oracles feed prices", "Flash loans amplify attacks"],

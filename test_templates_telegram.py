@@ -190,7 +190,7 @@ async def main():
                         **send_kwargs,
                     )
                     sent += 1
-                    print(f"  -> Sent OK (text fallback)")
+                    print("  -> Sent OK (text fallback)")
                 except Exception as e2:
                     print(f"  -> Fallback also failed: {e2}")
 

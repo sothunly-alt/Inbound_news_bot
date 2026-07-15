@@ -22,7 +22,7 @@ _CAPTION_MAX: int = 1024
 _MAX_RETRIES: int = 3
 _RETRY_BASE_DELAY: float = 1.0
 
-_REQUIRED_JSON_KEYS = ("urgency", "headline", "summary")
+_REQUIRED_JSON_KEYS = ("urgency", "headline", "summary", "category")
 
 
 def _parse_ai_json(raw: str) -> dict:
@@ -64,6 +64,10 @@ def _validate_ai_data(data: dict) -> tuple[bool, str | None]:
     if data["urgency"] not in valid_levels:
         return False, f"Invalid urgency level: '{data['urgency']}'"
 
+    valid_categories = {"startups", "ai", "cybersecurity", "defi", "big_tech", "hardware", "science", "regulation"}
+    if data["category"] not in valid_categories:
+        return False, f"Invalid category: '{data['category']}'"
+
     # Validate list fields
     for key in ("key_points", "metrics", "who_affected", "what_to_do", "tags"):
         if key in data and not isinstance(data[key], list):
@@ -101,9 +105,23 @@ def _bullet_list(items: list[str], limit: int = 5) -> str:
     return "\n".join(f"• {_escape(item)}" for item in items[:limit])
 
 
+_CATEGORY_LABELS: dict[str, str] = {
+    "startups": "Startups",
+    "ai": "AI & ML",
+    "cybersecurity": "Cybersecurity",
+    "defi": "DeFi & Crypto",
+    "big_tech": "Big Tech",
+    "hardware": "Hardware & Devices",
+    "science": "Science & Research",
+    "regulation": "Regulation & Policy",
+}
+
+
 def render_template(data: dict) -> str:
     """Render AI-structured data into a Telegram HTML message using the appropriate template."""
     urgency = data.get("urgency", "analysis")
+    category = data.get("category", "")
+    category_label = _CATEGORY_LABELS.get(category, category.title() if category else "")
     headline = _escape(data["headline"])
     summary = _escape(data["summary"])
     key_points = data.get("key_points", [])
@@ -113,6 +131,8 @@ def render_template(data: dict) -> str:
 
     if urgency == "breaking":
         sections.append(f"🚨 CRITICAL: <b>{headline}</b>")
+        if category_label:
+            sections.append(f"📂 {category_label}")
         sections.append("")
         sections.append(summary)
 
@@ -140,6 +160,8 @@ def render_template(data: dict) -> str:
 
     elif urgency == "alert":
         sections.append(f"⚠️ ALERT: <b>{headline}</b>")
+        if category_label:
+            sections.append(f"📂 {category_label}")
         sections.append("")
         sections.append(summary)
 
@@ -162,6 +184,8 @@ def render_template(data: dict) -> str:
 
     elif urgency == "market":
         sections.append(f"💹 <b>{headline}</b>")
+        if category_label:
+            sections.append(f"📂 {category_label}")
         sections.append("")
         sections.append(summary)
 
@@ -178,6 +202,8 @@ def render_template(data: dict) -> str:
 
     elif urgency == "explainer":
         sections.append(f"📚 EXPLAINER: <b>{headline}</b>")
+        if category_label:
+            sections.append(f"📂 {category_label}")
         sections.append("")
         sections.append(summary)
 
@@ -199,6 +225,8 @@ def render_template(data: dict) -> str:
 
     else:  # analysis (default)
         sections.append(f"📊 <b>{headline}</b>")
+        if category_label:
+            sections.append(f"📂 {category_label}")
         sections.append("")
         sections.append(summary)
 
@@ -301,6 +329,7 @@ Given the following stories about the same event, return a JSON object with thes
 
 {{
   "urgency": "breaking|alert|analysis|market|explainer",
+  "category": "startups|ai|cybersecurity|defi|big_tech|hardware|science|regulation",
   "headline": "short punchy headline",
   "summary": "1-2 sentence summary of what happened",
   "key_points": ["point 1", "point 2", "point 3"],
@@ -314,12 +343,22 @@ Given the following stories about the same event, return a JSON object with thes
   "tags": ["Topic1", "Topic2", "Topic3"]
 }}
 
-Classification guide:
+Urgency classification:
 - "breaking": active exploit, major outage, critical vulnerability being exploited NOW
 - "alert": vulnerability disclosed, action required, upcoming deadline
 - "analysis": regulation, governance, policy, research report
 - "market": price action, trading volume, ETF flows, token launches
 - "explainer": education, how something works, deep dive context
+
+Category classification:
+- "startups": funding rounds, new company launches, founder stories, acquisitions, startup trends
+- "ai": AI/ML models, tools, research breakthroughs, AI applications, AI companies
+- "cybersecurity": vulnerabilities, breaches, threats, malware, security research, ransomware
+- "defi": crypto tokens, DeFi protocols, blockchain, exchanges, Web3
+- "big_tech": Apple, Google, Meta, Microsoft, Amazon, Netflix — product moves, strategy, antitrust
+- "hardware": chips, GPUs, CPUs, devices, phones, wearables, robotics,半导体
+- "science": research breakthroughs, academic papers, quantum, materials, space, batteries
+- "regulation": government policy, legislation, antitrust, privacy law, compliance, court rulings
 
 Rules:
 - Report facts only — no opinions, no speculation, no buy/sell advice
@@ -332,7 +371,6 @@ Stories covering the same event:
 {headlines}"""
 
     raw_output = None
-    last_error = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
@@ -346,7 +384,6 @@ Stories covering the same event:
             raw_output = content.strip()
             break
         except Exception as exc:
-            last_error = exc
             if attempt < _MAX_RETRIES:
                 delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
@@ -394,6 +431,7 @@ def _fallback_data(cluster: list[Entry], urgent: bool) -> dict:
 
     return {
         "urgency": urgency,
+        "category": "startups",
         "headline": primary.title,
         "summary": primary.summary[:200],
         "key_points": [f"Reported by: {', '.join(source_names[:3])}"],
