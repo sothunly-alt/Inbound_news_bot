@@ -126,6 +126,7 @@ def render_template(data: dict) -> str:
     summary = _escape(data["summary"])
     key_points = data.get("key_points", [])
     tags = data.get("tags", [])
+    published_date = data.get("published_date", "")
 
     sections: list[str] = []
 
@@ -133,6 +134,8 @@ def render_template(data: dict) -> str:
         sections.append(f"🚨 CRITICAL: <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -162,6 +165,8 @@ def render_template(data: dict) -> str:
         sections.append(f"⚠️ ALERT: <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -186,6 +191,8 @@ def render_template(data: dict) -> str:
         sections.append(f"💹 <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -204,6 +211,8 @@ def render_template(data: dict) -> str:
         sections.append(f"📚 EXPLAINER: <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -227,6 +236,8 @@ def render_template(data: dict) -> str:
         sections.append(f"📊 <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -316,7 +327,7 @@ def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | No
         )
 
     headlines = "\n".join(
-        f"- [{e.source_name}] {e.title}: {e.summary[:200]}"
+        f"- [{e.source_name}] {e.title}: {e.summary[:200]} (Published: {e.published_date or 'unknown date'})"
         for e in cluster[:5]
     )
 
@@ -340,7 +351,8 @@ Given the following stories about the same event, return a JSON object with thes
   "what_to_do": ["actionable steps if alert/breaking"],
   "context": "why this matters, background or precedent",
   "tldr": "one sentence summary",
-  "tags": ["Topic1", "Topic2", "Topic3"]
+  "tags": ["Topic1", "Topic2", "Topic3"],
+  "published_date": "the publication date from the sources, e.g. 'Jul 16, 2026'"
 }}
 
 Urgency classification:
@@ -427,6 +439,11 @@ Stories covering the same event:
     # Inject source info
     data["source_name"] = source_name_str
 
+    # Inject publication date from the primary entry
+    primary_date = cluster[0].published_date if cluster else None
+    if primary_date:
+        data["published_date"] = primary_date
+
     # Override urgency if caller specified urgent
     if urgent and data.get("urgency") not in ("breaking", "alert"):
         data["urgency"] = "alert"
@@ -455,4 +472,5 @@ def _fallback_data(cluster: list[Entry], urgent: bool) -> dict:
         "summary": summary,
         "key_points": [f"Reported by: {', '.join(source_names[:3])}"],
         "tags": ["News"],
+        "published_date": primary.published_date or "",
     }
