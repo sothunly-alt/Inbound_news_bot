@@ -7,17 +7,30 @@ import json
 import logging
 import re
 import time
+from typing import Any
 
-from config import (
+from newsbot.config import (
     DIGEST_MIN_SOURCES,
+    GROQ_MAX_TOKENS,
     GROQ_MODEL,
-    client,
+    LINK_CAP_NORMAL,
+    LINK_CAP_URGENT,
+    NEWS_CATEGORIES_SET,
+    URGENCY_LEVELS_SET,
 )
-from feeds import Entry
+from newsbot.feeds import Entry
+
+__all__ = [
+    "render_template",
+    "trim_for_caption",
+    "collect_links",
+    "pick_image_url",
+    "rewrite_with_ai",
+]
 
 logger = logging.getLogger(__name__)
 
-_MAX_TELEGRAM_LENGTH: int = 4000
+_MAX_TELEGRAM_LENGTH: int = 4096
 _CAPTION_MAX: int = 1024
 _MAX_RETRIES: int = 3
 _RETRY_BASE_DELAY: float = 1.0
@@ -25,15 +38,18 @@ _RETRY_BASE_DELAY: float = 1.0
 _REQUIRED_JSON_KEYS = ("urgency", "headline", "summary", "category")
 
 
+def _html_escape(text: str) -> str:
+    """HTML-escape text for Telegram (no quote escaping — Telegram doesn't need it)."""
+    return html.escape(text, quote=False)
+
+
 def _parse_ai_json(raw: str) -> dict:
     """Parse JSON from AI output, handling markdown code fences and preamble text."""
-    # Try direct parse first
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from ```json ... ``` blocks
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", raw, re.DOTALL)
     if match:
         try:
@@ -41,8 +57,7 @@ def _parse_ai_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Try finding first { ... } block
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    match = re.search(r"\{.*?\}", raw, re.DOTALL)
     if match:
         try:
             return json.loads(match.group(0))
@@ -60,15 +75,12 @@ def _validate_ai_data(data: dict) -> tuple[bool, str | None]:
         if not isinstance(data[key], str) or not data[key].strip():
             return False, f"Key '{key}' must be a non-empty string"
 
-    valid_levels = {"breaking", "alert", "analysis", "market", "explainer"}
-    if data["urgency"] not in valid_levels:
+    if data["urgency"] not in URGENCY_LEVELS_SET:
         return False, f"Invalid urgency level: '{data['urgency']}'"
 
-    valid_categories = {"startups", "ai", "cybersecurity", "defi", "big_tech", "hardware", "science", "regulation"}
-    if data["category"] not in valid_categories:
+    if data["category"] not in NEWS_CATEGORIES_SET:
         return False, f"Invalid category: '{data['category']}'"
 
-    # Validate list fields
     for key in ("key_points", "metrics", "who_affected", "what_to_do", "tags"):
         if key in data and not isinstance(data[key], list):
             return False, f"Key '{key}' must be a list"
@@ -95,14 +107,9 @@ def _md_bold_to_html(text: str) -> str:
     return "".join(parts)
 
 
-def _escape(text: str) -> str:
-    """HTML-escape text for Telegram (no quote escaping — Telegram doesn't need it)."""
-    return html.escape(text, quote=False)
-
-
 def _bullet_list(items: list[str], limit: int = 5) -> str:
     """Render items as bullet points."""
-    return "\n".join(f"• {_escape(item)}" for item in items[:limit])
+    return "\n".join(f"• {_html_escape(item)}" for item in items[:limit])
 
 
 _CATEGORY_LABELS: dict[str, str] = {
@@ -117,166 +124,145 @@ _CATEGORY_LABELS: dict[str, str] = {
 }
 
 
+def _render_header(data: dict) -> list[str]:
+    """Render the shared header (headline prefix, category, date) for all templates."""
+    headline = _html_escape(data.get("headline", "Untitled"))
+    category_label = _CATEGORY_LABELS.get(data.get("category", ""), "")
+    published_date = data.get("published_date", "")
+    sections: list[str] = []
+    if category_label:
+        sections.append(f"📂 {category_label}")
+    if published_date:
+        sections.append(f"📅 {_html_escape(published_date)}")
+    if sections:
+        sections.append("")
+    return sections
+
+
+def _render_footer(data: dict) -> list[str]:
+    """Render the shared footer (source, tags) for all templates."""
+    sections: list[str] = []
+    source_name = data.get("source_name", "")
+    if source_name:
+        sections.append("")
+        sections.append(f"📌 Source: {_html_escape(source_name)}")
+    tags = data.get("tags", [])
+    if tags:
+        tag_str = " ".join(f"#{_html_escape(t)}" for t in tags[:5])
+        sections.append(f"🏷️ {tag_str}")
+    return sections
+
+
 def render_template(data: dict) -> str:
     """Render AI-structured data into a Telegram HTML message using the appropriate template."""
     urgency = data.get("urgency", "analysis")
-    category = data.get("category", "")
-    category_label = _CATEGORY_LABELS.get(category, category.title() if category else "")
-    headline = _escape(data["headline"])
-    summary = _escape(data["summary"])
+    headline = _html_escape(data.get("headline", "Untitled"))
+    summary = _html_escape(data.get("summary", ""))
     key_points = data.get("key_points", [])
-    tags = data.get("tags", [])
-    published_date = data.get("published_date", "")
 
     sections: list[str] = []
 
     if urgency == "breaking":
         sections.append(f"🚨 CRITICAL: <b>{headline}</b>")
-        if category_label:
-            sections.append(f"📂 {category_label}")
-        if published_date:
-            sections.append(f"📅 {_escape(published_date)}")
-        sections.append("")
+        sections.extend(_render_header(data))
         sections.append(summary)
-
         metrics = data.get("metrics", [])
         if metrics:
             sections.append("")
             sections.append("📊 KEY METRICS:")
             sections.append(_bullet_list(metrics))
-
         why_matters = data.get("context", "")
         if why_matters:
             sections.append("")
             sections.append("⚠️ WHY IT MATTERS:")
-            sections.append(_escape(why_matters))
-
+            sections.append(_html_escape(why_matters))
         if key_points:
             sections.append("")
             sections.append("🔍 DETAILS:")
             sections.append(_bullet_list(key_points))
-
         timeline = data.get("timeline", "")
         if timeline:
             sections.append("")
-            sections.append(f"⏰ {_escape(timeline)}")
+            sections.append(f"⏰ {_html_escape(timeline)}")
 
     elif urgency == "alert":
         sections.append(f"⚠️ ALERT: <b>{headline}</b>")
-        if category_label:
-            sections.append(f"📂 {category_label}")
-        if published_date:
-            sections.append(f"📅 {_escape(published_date)}")
-        sections.append("")
+        sections.extend(_render_header(data))
         sections.append(summary)
-
         what_to_do = data.get("what_to_do", [])
         if what_to_do:
             sections.append("")
             sections.append("🛡️ WHAT TO DO:")
             sections.append(_bullet_list(what_to_do))
-
         who = data.get("who_affected", [])
         if who:
             sections.append("")
             sections.append("📍 AFFECTED:")
             sections.append(_bullet_list(who))
-
         timeline = data.get("timeline", "")
         if timeline:
             sections.append("")
-            sections.append(f"⏰ {_escape(timeline)}")
+            sections.append(f"⏰ {_html_escape(timeline)}")
 
     elif urgency == "market":
         sections.append(f"💹 <b>{headline}</b>")
-        if category_label:
-            sections.append(f"📂 {category_label}")
-        if published_date:
-            sections.append(f"📅 {_escape(published_date)}")
-        sections.append("")
+        sections.extend(_render_header(data))
         sections.append(summary)
-
         if key_points:
             sections.append("")
             sections.append("📊 KEY POINTS:")
             sections.append(_bullet_list(key_points))
-
         market_impact = data.get("market_impact", "")
         if market_impact:
             sections.append("")
             sections.append("📈 MARKET IMPACT:")
-            sections.append(_escape(market_impact))
+            sections.append(_html_escape(market_impact))
 
     elif urgency == "explainer":
         sections.append(f"📚 EXPLAINER: <b>{headline}</b>")
-        if category_label:
-            sections.append(f"📂 {category_label}")
-        if published_date:
-            sections.append(f"📅 {_escape(published_date)}")
-        sections.append("")
+        sections.extend(_render_header(data))
         sections.append(summary)
-
         if key_points:
             sections.append("")
             sections.append("🔹 KEY POINTS:")
             sections.append(_bullet_list(key_points, limit=8))
-
         what_to_watch = data.get("what_to_watch", [])
         if what_to_watch:
             sections.append("")
             sections.append("🔹 WHAT TO WATCH:")
             sections.append(_bullet_list(what_to_watch))
-
         tldr = data.get("tldr", "")
         if tldr:
             sections.append("")
-            sections.append(f"💡 TL;DR: {_escape(tldr)}")
+            sections.append(f"💡 TL;DR: {_html_escape(tldr)}")
 
     else:  # analysis (default)
         sections.append(f"📊 <b>{headline}</b>")
-        if category_label:
-            sections.append(f"📂 {category_label}")
-        if published_date:
-            sections.append(f"📅 {_escape(published_date)}")
-        sections.append("")
+        sections.extend(_render_header(data))
         sections.append(summary)
-
         if key_points:
             sections.append("")
             sections.append("💡 KEY POINTS:")
             sections.append(_bullet_list(key_points))
-
         market_impact = data.get("market_impact", "")
         if market_impact:
             sections.append("")
             sections.append("📈 MARKET IMPACT:")
-            sections.append(_escape(market_impact))
-
+            sections.append(_html_escape(market_impact))
         who = data.get("who_affected", [])
         if who:
             sections.append("")
             sections.append("🎯 WHO THIS AFFECTS:")
             sections.append(_bullet_list(who))
-
         context = data.get("context", "")
         if context:
             sections.append("")
             sections.append("💬 CONTEXT:")
-            sections.append(_escape(context))
+            sections.append(_html_escape(context))
 
-    # Source and tags are always appended
-    source_name = data.get("source_name", "")
-    if source_name:
-        sections.append("")
-        sections.append(f"📌 Source: {_escape(source_name)}")
-
-    if tags:
-        tag_str = " ".join(f"#{_escape(t)}" for t in tags[:5])
-        sections.append(f"🏷️ {tag_str}")
+    sections.extend(_render_footer(data))
 
     text = "\n".join(sections).strip()
-
-    # Truncate if over Telegram limit
     if len(text) > _MAX_TELEGRAM_LENGTH:
         text = text[: _MAX_TELEGRAM_LENGTH - 1].rsplit("\n", 1)[0] + "\n…"
 
@@ -301,7 +287,8 @@ def collect_links(cluster: list[Entry], urgent: bool = False) -> list[str]:
         if entry.link not in seen:
             seen.add(entry.link)
             links.append(entry.link)
-    return links[:3] if urgent else links[:5]
+    cap = LINK_CAP_URGENT if urgent else LINK_CAP_NORMAL
+    return links[:cap]
 
 
 def pick_image_url(cluster: list[Entry]) -> str | None:
@@ -312,29 +299,13 @@ def pick_image_url(cluster: list[Entry]) -> str | None:
     return None
 
 
-def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | None = None) -> str:
-    """Produce a formatted Telegram HTML post using AI-structured data and templates.
-
-    Returns the rendered HTML string ready to send with parse_mode='HTML'.
-    """
-    links = collect_links(cluster, urgent=urgent)
-
-    source_note = ""
-    if len(links) < DIGEST_MIN_SOURCES:
-        source_note = (
-            f"\nNote: only {len(links)} source(s) available so far "
-            f"(prefer {DIGEST_MIN_SOURCES}+ when possible)."
-        )
-
+def _build_prompt(cluster: list[Entry], source_note: str) -> str:
+    """Build the AI prompt for a cluster of related stories."""
     headlines = "\n".join(
         f"- [{e.source_name}] {e.title}: {e.summary[:200]}"
         for e in cluster[:5]
     )
-
-    source_names = list(dict.fromkeys(e.source_name for e in cluster))
-    source_name_str = source_names[0] if source_names else "Unknown"
-
-    prompt = f"""You are a tech news bot analyzing stories for a Telegram channel.
+    return f"""You are a tech news bot analyzing stories for a Telegram channel.
 
 Given the following stories about the same event, return a JSON object with these fields:
 
@@ -381,12 +352,18 @@ Rules:
 Stories covering the same event:
 {headlines}"""
 
+
+def _call_groq_with_retry(prompt: str) -> str | None:
+    """Call the Groq API with retry logic. Returns raw output or None on failure."""
+    from newsbot.config import create_groq_client
+
+    client = create_groq_client()
     raw_output = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
                 model=GROQ_MODEL,
-                max_tokens=500,
+                max_tokens=GROQ_MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
             )
             content = response.choices[0].message.content
@@ -403,12 +380,16 @@ Stories covering the same event:
                 )
                 time.sleep(delay)
             else:
-                logger.exception(
-                    "Groq API failed after %d attempts for cluster starting with '%s'",
-                    _MAX_RETRIES, cluster[0].title,
-                )
+                logger.exception("Groq API failed after %d attempts", _MAX_RETRIES)
+    return raw_output
 
-    # Parse JSON from AI output
+
+def _process_ai_output(
+    raw_output: str | None,
+    cluster: list[Entry],
+    urgent: bool,
+) -> dict:
+    """Parse and validate AI output, falling back gracefully on failure."""
     if raw_output is None:
         data = _fallback_data(cluster, urgent)
     else:
@@ -418,7 +399,6 @@ Stories covering the same event:
             logger.warning("Failed to parse AI output as JSON, using fallback. Raw: %.200s", raw_output)
             data = _fallback_data(cluster, urgent)
 
-    # Validate (only call fallback once to avoid infinite loop)
     is_valid, reason = _validate_ai_data(data)
     if not is_valid:
         logger.warning("AI output validation failed (%s), using fallback", reason)
@@ -434,20 +414,36 @@ Stories covering the same event:
                 "key_points": [],
                 "tags": [],
             }
+    return data
 
-    # Inject source info
+
+def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | None = None) -> str:
+    """Produce a formatted Telegram HTML post using AI-structured data and templates."""
+    links = collect_links(cluster, urgent=urgent)
+
+    source_note = ""
+    if len(links) < DIGEST_MIN_SOURCES:
+        source_note = (
+            f"\nNote: only {len(links)} source(s) available so far "
+            f"(prefer {DIGEST_MIN_SOURCES}+ when possible)."
+        )
+
+    source_names = list(dict.fromkeys(e.source_name for e in cluster))
+    source_name_str = source_names[0] if source_names else "Unknown"
+
+    prompt = _build_prompt(cluster, source_note)
+    raw_output = _call_groq_with_retry(prompt)
+    data = _process_ai_output(raw_output, cluster, urgent)
+
     data["source_name"] = source_name_str
 
-    # Inject published date from first entry
     primary_date = cluster[0].published_date if cluster else None
     if primary_date:
         data["published_date"] = primary_date
 
-    # Override urgency if caller specified urgent
     if urgent and data.get("urgency") not in ("breaking", "alert"):
         data["urgency"] = "alert"
 
-    # Prepend header if provided
     rendered = render_template(data)
     if header:
         rendered = f"{header}\n\n{rendered}"

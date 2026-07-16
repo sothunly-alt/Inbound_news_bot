@@ -4,6 +4,8 @@ Uses Redis (Upstash) when REDIS_URL is set — survives Render/Railway restarts.
 Falls back to local JSON files for local development.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -11,9 +13,10 @@ import tempfile
 import threading
 from abc import ABC, abstractmethod
 
+__all__ = ["StateBackend", "get_state", "reset_state"]
+
 logger = logging.getLogger(__name__)
 
-# Posted IDs expire after 30 days to prevent unbounded growth.
 POSTED_ID_TTL_SECONDS: int = 30 * 24 * 60 * 60
 
 _SUBSCRIBERS_KEY = "newsbot:subscribers"
@@ -25,36 +28,28 @@ class StateBackend(ABC):
     """Interface for persistent state storage."""
 
     @abstractmethod
-    def load_subscribers(self) -> set[int]:
-        ...
+    def load_subscribers(self) -> set[int]: ...
 
     @abstractmethod
-    def save_subscribers(self, ids: set[int]) -> None:
-        ...
+    def save_subscribers(self, ids: set[int]) -> None: ...
 
     @abstractmethod
-    def load_posted_ids(self) -> set[str]:
-        ...
+    def load_posted_ids(self) -> set[str]: ...
 
     @abstractmethod
-    def save_posted_ids(self, ids: set[str]) -> None:
-        ...
+    def save_posted_ids(self, ids: set[str]) -> None: ...
 
     @abstractmethod
-    def add_posted_ids(self, ids: set[str]) -> None:
-        ...
+    def add_posted_ids(self, ids: set[str]) -> None: ...
 
     @abstractmethod
-    def load_posted_titles(self) -> set[str]:
-        ...
+    def load_posted_titles(self) -> set[str]: ...
 
     @abstractmethod
-    def save_posted_titles(self, titles: set[str]) -> None:
-        ...
+    def save_posted_titles(self, titles: set[str]) -> None: ...
 
     @abstractmethod
-    def add_posted_titles(self, titles: set[str]) -> None:
-        ...
+    def add_posted_titles(self, titles: set[str]) -> None: ...
 
 
 class RedisState(StateBackend):
@@ -78,73 +73,57 @@ class RedisState(StateBackend):
             pipe.sadd(_SUBSCRIBERS_KEY, *(str(cid) for cid in ids))
         pipe.execute()
 
-    def load_posted_ids(self) -> set[str]:
-        posted: set[str] = set()
+    def _load_redis_set(self, prefix: str) -> set[str]:
+        result: set[str] = set()
         cursor = 0
         while True:
-            cursor, keys = self._r.scan(cursor, match=f"{_POSTED_ID_PREFIX}*", count=200)
+            cursor, keys = self._r.scan(cursor, match=f"{prefix}*", count=200)
             for key in keys:
-                posted.add(key[len(_POSTED_ID_PREFIX):])
+                result.add(key[len(prefix):])
             if cursor == 0:
                 break
-        return posted
+        return result
+
+    def _save_redis_set(self, prefix: str, values: set[str]) -> None:
+        pipe = self._r.pipeline()
+        cursor = 0
+        while True:
+            cursor, keys = self._r.scan(cursor, match=f"{prefix}*", count=200)
+            if keys:
+                pipe.delete(*keys)
+            if cursor == 0:
+                break
+        for value in values:
+            pipe.set(f"{prefix}{value}", "1", ex=POSTED_ID_TTL_SECONDS)
+        pipe.execute()
+
+    def _add_redis_set(self, prefix: str, values: set[str]) -> None:
+        pipe = self._r.pipeline()
+        for value in values:
+            pipe.set(f"{prefix}{value}", "1", ex=POSTED_ID_TTL_SECONDS)
+        pipe.execute()
+
+    def load_posted_ids(self) -> set[str]:
+        return self._load_redis_set(_POSTED_ID_PREFIX)
 
     def save_posted_ids(self, ids: set[str]) -> None:
-        pipe = self._r.pipeline()
-        cursor = 0
-        while True:
-            cursor, keys = self._r.scan(cursor, match=f"{_POSTED_ID_PREFIX}*", count=200)
-            if keys:
-                pipe.delete(*keys)
-            if cursor == 0:
-                break
-        for entry_id in ids:
-            pipe.set(f"{_POSTED_ID_PREFIX}{entry_id}", "1", ex=POSTED_ID_TTL_SECONDS)
-        pipe.execute()
+        self._save_redis_set(_POSTED_ID_PREFIX, ids)
 
     def add_posted_ids(self, ids: set[str]) -> None:
-        pipe = self._r.pipeline()
-        for entry_id in ids:
-            pipe.set(f"{_POSTED_ID_PREFIX}{entry_id}", "1", ex=POSTED_ID_TTL_SECONDS)
-        pipe.execute()
+        self._add_redis_set(_POSTED_ID_PREFIX, ids)
 
     def load_posted_titles(self) -> set[str]:
-        posted: set[str] = set()
-        cursor = 0
-        while True:
-            cursor, keys = self._r.scan(cursor, match=f"{_POSTED_TITLE_PREFIX}*", count=200)
-            for key in keys:
-                posted.add(key[len(_POSTED_TITLE_PREFIX):])
-            if cursor == 0:
-                break
-        return posted
+        return self._load_redis_set(_POSTED_TITLE_PREFIX)
 
     def save_posted_titles(self, titles: set[str]) -> None:
-        pipe = self._r.pipeline()
-        cursor = 0
-        while True:
-            cursor, keys = self._r.scan(cursor, match=f"{_POSTED_TITLE_PREFIX}*", count=200)
-            if keys:
-                pipe.delete(*keys)
-            if cursor == 0:
-                break
-        for title in titles:
-            pipe.set(f"{_POSTED_TITLE_PREFIX}{title}", "1", ex=POSTED_ID_TTL_SECONDS)
-        pipe.execute()
+        self._save_redis_set(_POSTED_TITLE_PREFIX, titles)
 
     def add_posted_titles(self, titles: set[str]) -> None:
-        pipe = self._r.pipeline()
-        for title in titles:
-            pipe.set(f"{_POSTED_TITLE_PREFIX}{title}", "1", ex=POSTED_ID_TTL_SECONDS)
-        pipe.execute()
+        self._add_redis_set(_POSTED_TITLE_PREFIX, titles)
 
 
 class FileState(StateBackend):
-    """Local JSON file state — for development and non-Redis deployments.
-
-    All reads/writes are protected by a threading.Lock.
-    Writes use atomic temp-file + rename to prevent corruption.
-    """
+    """Local JSON file state — for development and non-Redis deployments."""
 
     def __init__(self, subscribers_path: str, posted_path: str) -> None:
         self._subscribers_path = subscribers_path
@@ -152,7 +131,7 @@ class FileState(StateBackend):
         self._lock = threading.Lock()
 
     def _atomic_write(self, path: str, data: object) -> None:
-        """Write JSON atomically: write to temp file, then os.replace (POSIX-safe)."""
+        """Write JSON atomically: write to temp file, then os.replace."""
         dir_name = os.path.dirname(path) or "."
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
         try:
@@ -160,42 +139,40 @@ class FileState(StateBackend):
                 json.dump(data, f)
             os.replace(tmp_path, path)
         except OSError:
-            # Clean up temp file on failure
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
             raise
 
-    def load_subscribers(self) -> set[int]:
-        if os.path.exists(self._subscribers_path):
+    def _load_json_set(self, path: str) -> set:
+        """Load a JSON array from a file and return as a set."""
+        if os.path.exists(path):
             try:
-                with open(self._subscribers_path, "r") as f:
+                with open(path, "r") as f:
                     return set(json.load(f))
             except (json.JSONDecodeError, OSError):
-                logger.exception("Failed to load %s", self._subscribers_path)
+                logger.exception("Failed to load %s", path)
         return set()
+
+    def _save_json_set(self, path: str, data: set) -> None:
+        """Save a set as a JSON array atomically."""
+        try:
+            self._atomic_write(path, list(data))
+        except OSError:
+            logger.exception("Failed to save %s", path)
+
+    def load_subscribers(self) -> set[int]:
+        return self._load_json_set(self._subscribers_path)
 
     def save_subscribers(self, ids: set[int]) -> None:
-        try:
-            self._atomic_write(self._subscribers_path, list(ids))
-        except OSError:
-            logger.exception("Failed to save %s", self._subscribers_path)
+        self._save_json_set(self._subscribers_path, ids)
 
     def load_posted_ids(self) -> set[str]:
-        if os.path.exists(self._posted_path):
-            try:
-                with open(self._posted_path, "r") as f:
-                    return set(json.load(f))
-            except (json.JSONDecodeError, OSError):
-                logger.exception("Failed to load %s", self._posted_path)
-        return set()
+        return self._load_json_set(self._posted_path)
 
     def save_posted_ids(self, ids: set[str]) -> None:
-        try:
-            self._atomic_write(self._posted_path, list(ids))
-        except OSError:
-            logger.exception("Failed to save %s", self._posted_path)
+        self._save_json_set(self._posted_path, ids)
 
     def add_posted_ids(self, ids: set[str]) -> None:
         with self._lock:
@@ -207,20 +184,10 @@ class FileState(StateBackend):
         return self._posted_path.replace(".json", "_titles.json")
 
     def load_posted_titles(self) -> set[str]:
-        path = self._posted_titles_path()
-        if os.path.exists(path):
-            try:
-                with open(path, "r") as f:
-                    return set(json.load(f))
-            except (json.JSONDecodeError, OSError):
-                logger.exception("Failed to load %s", path)
-        return set()
+        return self._load_json_set(self._posted_titles_path())
 
     def save_posted_titles(self, titles: set[str]) -> None:
-        try:
-            self._atomic_write(self._posted_titles_path(), list(titles))
-        except OSError:
-            logger.exception("Failed to save %s", self._posted_titles_path())
+        self._save_json_set(self._posted_titles_path(), titles)
 
     def add_posted_titles(self, titles: set[str]) -> None:
         with self._lock:
@@ -234,10 +201,7 @@ _state_lock = threading.Lock()
 
 
 def get_state() -> StateBackend:
-    """Return the active state backend (Redis if REDIS_URL set, else File).
-
-    Thread-safe: uses double-checked locking for the singleton.
-    """
+    """Return the active state backend (Redis if REDIS_URL set, else File)."""
     global _state
     if _state is not None:
         return _state
@@ -254,7 +218,7 @@ def get_state() -> StateBackend:
             except Exception:
                 logger.exception("Failed to connect to Redis — falling back to file state")
 
-        from config import POSTED_LOG, SUBSCRIBERS_LOG
+        from newsbot.config import POSTED_LOG, SUBSCRIBERS_LOG
 
         _state = FileState(SUBSCRIBERS_LOG, POSTED_LOG)
         logger.info("Using file-based state backend.")

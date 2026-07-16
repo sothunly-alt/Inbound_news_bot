@@ -1,9 +1,13 @@
 """HTTP health check server for Render / Railway deployments."""
 
+from __future__ import annotations
+
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from config import PORT
+from newsbot.config import PORT
+
+__all__ = ["start_health_server"]
 
 logger = logging.getLogger(__name__)
 

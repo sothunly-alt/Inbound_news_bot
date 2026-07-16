@@ -1,11 +1,6 @@
 """Tests for feeds.py — normalization, clustering, urgency detection."""
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from feeds import (
+from newsbot.feeds import (
     Entry,
     _normalize_title,
     _summary_similarity,
@@ -110,7 +105,6 @@ class TestClusterEntries:
         ]
         clusters = cluster_entries(entries)
         assert len(clusters) == 2
-        # First cluster should have the two related stories
         assert any(len(c) == 2 for c in clusters)
         assert any(len(c) == 1 for c in clusters)
 

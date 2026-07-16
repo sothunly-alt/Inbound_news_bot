@@ -5,29 +5,53 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import re
+import threading
 import time
 from calendar import timegm
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 import feedparser
 import httpx
 
-from config import (
+from newsbot.config import (
     CLUSTER_SIMILARITY_THRESHOLD,
+    CLUSTER_SUMMARY_WEIGHT,
+    CLUSTER_TITLE_WEIGHT,
     CONTENT_DEDUP_THRESHOLD,
+    FEED_GLOBAL_TIMEOUT_EXTRA,
     FEED_TIMEOUT_SECONDS,
     MAX_ENTRY_AGE_HOURS,
     MAX_ITEMS_PER_FEED,
     RSS_FEEDS,
+    SUMMARY_SIM_WORD_LIMIT,
     URGENT_KEYWORDS,
 )
 
+__all__ = [
+    "Entry",
+    "extract_image_url",
+    "normalize_title_key",
+    "collect_new_entries",
+    "cluster_entries",
+    "looks_urgent",
+]
+
 logger = logging.getLogger(__name__)
 
-# Module-level HTTP client with timeout for real cancellation
-_http_client = httpx.Client(timeout=FEED_TIMEOUT_SECONDS, follow_redirects=True)
+# Thread-local httpx clients — httpx.Client is not thread-safe
+_thread_local = threading.local()
+
+
+def _get_http_client() -> httpx.Client:
+    """Return a per-thread httpx.Client instance."""
+    client = getattr(_thread_local, "client", None)
+    if client is None:
+        client = httpx.Client(timeout=FEED_TIMEOUT_SECONDS, follow_redirects=True)
+        _thread_local.client = client
+    return client
+
 
 # Shared thread pool for parallel feed fetching
 _feed_pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(RSS_FEEDS), 10))
@@ -44,7 +68,7 @@ _IMG_SRC_RE = re.compile(
 )
 
 
-def _format_entry_date(raw_entry: Any) -> Optional[str]:
+def _format_entry_date(raw_entry: Any) -> str | None:
     """Extract and format the publication date from an RSS entry as 'Mon DD, YYYY'."""
     parsed = getattr(raw_entry, "published_parsed", None) or getattr(raw_entry, "updated_parsed", None)
     if parsed is None:
@@ -57,11 +81,7 @@ def _format_entry_date(raw_entry: Any) -> Optional[str]:
 
 
 def _is_entry_too_old(raw_entry: Any, max_age_hours: int = MAX_ENTRY_AGE_HOURS) -> bool:
-    """Check if an RSS entry is older than max_age_hours.
-
-    Tries published_parsed first, then updated_parsed.
-    Returns False (not too old) if no timestamp is available.
-    """
+    """Check if an RSS entry is older than max_age_hours."""
     parsed = getattr(raw_entry, "published_parsed", None) or getattr(raw_entry, "updated_parsed", None)
     if parsed is None:
         return False
@@ -76,16 +96,17 @@ def _is_entry_too_old(raw_entry: Any, max_age_hours: int = MAX_ENTRY_AGE_HOURS) 
 @dataclass
 class Entry:
     """A single news item from an RSS feed."""
+
     id: str
     title: str
     summary: str
     link: str
     source_name: str
-    image_url: Optional[str] = None
-    published_date: Optional[str] = None
+    image_url: str | None = None
+    published_date: str | None = None
 
 
-def extract_image_url(raw_entry: Any) -> Optional[str]:
+def extract_image_url(raw_entry: Any) -> str | None:
     """Pull an image URL from common RSS/Atom media fields, if present."""
     media_content = getattr(raw_entry, "media_content", None) or raw_entry.get("media_content")
     if media_content:
@@ -144,12 +165,12 @@ def _title_similarity(a: str, b: str) -> float:
 
 
 def _summary_similarity(a: str, b: str) -> float:
-    """Jaccard similarity over normalized summary tokens (capped at 100 words each)."""
+    """Jaccard similarity over normalized summary tokens (capped)."""
     def _norm(text: str) -> set[str]:
         text = text.lower()
         text = re.sub(r"[^a-z0-9\s]", " ", text)
         words = [t for t in text.split() if t and t not in _STOP_WORDS]
-        return set(words[:100])
+        return set(words[:SUMMARY_SIM_WORD_LIMIT])
     sa = _norm(a)
     sb = _norm(b)
     if not sa or not sb:
@@ -182,26 +203,23 @@ def _is_title_duplicate(title: str, posted_titles: set[str], threshold: float = 
 
 def _fetch_feed(url: str) -> Any:
     """Fetch a single RSS feed using httpx (real timeout) then parse with feedparser."""
-    resp = _http_client.get(url)
+    client = _get_http_client()
+    resp = client.get(url)
     resp.raise_for_status()
     return feedparser.parse(resp.text)
 
 
 def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = None) -> list[Entry]:
-    """Pull fresh entries from all feeds in parallel, skipping already-posted IDs and similar titles.
-
-    All feeds are fetched concurrently — a slow/dead feed does not block others.
-    """
+    """Pull fresh entries from all feeds in parallel, skipping already-posted IDs and similar titles."""
     if posted_titles is None:
         posted_titles = set()
 
-    # Submit all feeds in parallel
     futures: dict[concurrent.futures.Future, str] = {
         _feed_pool.submit(_fetch_feed, url): url for url in RSS_FEEDS
     }
 
     entries: list[Entry] = []
-    global_timeout = FEED_TIMEOUT_SECONDS + 10
+    global_timeout = FEED_TIMEOUT_SECONDS + FEED_GLOBAL_TIMEOUT_EXTRA
 
     for future in concurrent.futures.as_completed(futures, timeout=global_timeout):
         feed_url = futures[future]
@@ -254,18 +272,14 @@ def cluster_entries(
     entries: list[Entry],
     threshold: float = CLUSTER_SIMILARITY_THRESHOLD,
 ) -> list[list[Entry]]:
-    """Group related headlines across feeds using combined title + summary similarity.
-
-    Uses a weighted combination: title similarity 0.7 + summary similarity 0.3.
-    Greedy clustering — each entry is placed in the first matching cluster.
-    """
+    """Group related headlines across feeds using combined title + summary similarity."""
     clusters: list[list[Entry]] = []
     for entry in entries:
         placed = False
         for cluster in clusters:
             title_sim = _title_similarity(entry.title, cluster[0].title)
             summary_sim = _summary_similarity(entry.summary, cluster[0].summary)
-            combined = 0.7 * title_sim + 0.3 * summary_sim
+            combined = CLUSTER_TITLE_WEIGHT * title_sim + CLUSTER_SUMMARY_WEIGHT * summary_sim
             if combined >= threshold:
                 cluster.append(entry)
                 placed = True

@@ -1,12 +1,8 @@
 """Tests for ai.py — JSON parsing, validation, template rendering, and utilities."""
 
-import sys
-import os
+from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from feeds import Entry
-from ai import (
+from newsbot.ai import (
     _parse_ai_json,
     _validate_ai_data,
     _md_bold_to_html,
@@ -17,6 +13,7 @@ from ai import (
     pick_image_url,
     rewrite_with_ai,
 )
+from newsbot.feeds import Entry
 
 
 # --- JSON Parsing ---
@@ -50,6 +47,11 @@ class TestParseAiJson:
             assert False, "Should have raised ValueError"
         except ValueError:
             pass
+
+    def test_non_greedy_does_not_span_multiple_objects(self):
+        raw = '{"a": 1} some text {"b": 2}'
+        result = _parse_ai_json(raw)
+        assert result == {"a": 1}
 
 
 # --- Validation ---
@@ -119,11 +121,13 @@ class TestRenderTemplate:
             "timeline": "2:00 AM UTC | Discovered 3:30 AM UTC",
             "tags": ["DeFi", "Security"],
             "source_name": "CoinDesk",
+            "published_date": "Jul 16, 2026",
         }
         result = render_template(data)
         assert "🚨 CRITICAL:" in result
         assert "<b>Major Exploit</b>" in result
         assert "📂 Cybersecurity" in result
+        assert "📅 Jul 16, 2026" in result
         assert "Protocol hacked" in result
         assert "📊 KEY METRICS:" in result
         assert "Loss: $10M" in result
@@ -146,10 +150,12 @@ class TestRenderTemplate:
             "timeline": "Patch in 7-10 days",
             "tags": ["Security", "DeFi"],
             "source_name": "Compound Forum",
+            "published_date": "Jul 14, 2026",
         }
         result = render_template(data)
         assert "⚠️ ALERT:" in result
         assert "<b>Vulnerability in Compound V2</b>" in result
+        assert "📅 Jul 14, 2026" in result
         assert "🛡️ WHAT TO DO:" in result
         assert "Check positions" in result
         assert "📍 AFFECTED:" in result
@@ -169,9 +175,11 @@ class TestRenderTemplate:
             "context": "First clear language on DAO tokens.",
             "tags": ["Regulation", "DeFi"],
             "source_name": "The Block",
+            "published_date": "Jul 16, 2026",
         }
         result = render_template(data)
         assert "📊 <b>SEC Proposes" in result
+        assert "📅 Jul 16, 2026" in result
         assert "💡 KEY POINTS:" in result
         assert "Governance tokens may be securities" in result
         assert "📈 MARKET IMPACT:" in result
@@ -190,9 +198,11 @@ class TestRenderTemplate:
             "market_impact": "Bullish breakout confirmed.",
             "tags": ["BTC", "Bitcoin"],
             "source_name": "CoinGecko",
+            "published_date": "Jul 16, 2026",
         }
         result = render_template(data)
         assert "💹 <b>BTC Breaks $65K</b>" in result
+        assert "📅 Jul 16, 2026" in result
         assert "📊 KEY POINTS:" in result
         assert "📈 MARKET IMPACT:" in result
         assert "Bullish breakout" in result
@@ -209,10 +219,12 @@ class TestRenderTemplate:
             "tldr": "DeFi price feeds are a weak link.",
             "tags": ["Oracles", "DeFi"],
             "source_name": "Messari",
+            "published_date": "Jul 15, 2026",
         }
         result = render_template(data)
         assert "📚 EXPLAINER:" in result
         assert "<b>How Oracle Attacks Work</b>" in result
+        assert "📅 Jul 15, 2026" in result
         assert "🔹 KEY POINTS:" in result
         assert "🔹 WHAT TO WATCH:" in result
         assert "💡 TL;DR:" in result
@@ -231,7 +243,7 @@ class TestRenderTemplate:
             "summary": "x" * 4500,
         }
         result = render_template(data)
-        assert len(result) <= 4000
+        assert len(result) <= 4096
         assert result.endswith("…")
 
 
@@ -286,7 +298,7 @@ class TestFallbackData:
         assert is_valid is True, f"Fallback data failed validation: {reason}"
 
 
-# --- Existing Utilities ---
+# --- Utilities ---
 
 class TestMdBoldToHtml:
     def test_bold_conversion(self):
@@ -357,27 +369,62 @@ class TestPickImageUrl:
 
 
 class TestHeaderParameter:
-    def test_header_prepended_to_output(self):
-        cluster = [Entry(id="1", title="Test", summary="Summary", link="http://a.com", source_name="A")]
-        # Mock the Groq client to return valid AI data
-        from unittest.mock import MagicMock, patch
+    def _mock_groq(self):
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '{"urgency": "analysis", "category": "ai", "headline": "Test Story", "summary": "A summary", "key_points": ["point"], "tags": ["Tag"]}'
-        with patch("ai.client") as mock_client:
-            mock_client.chat.completions.create.return_value = mock_response
+        mock_response.choices[0].message.content = (
+            '{"urgency": "analysis", "category": "ai", "headline": "Test Story", '
+            '"summary": "A summary", "key_points": ["point"], "tags": ["Tag"]}'
+        )
+        return mock_response
+
+    def test_header_prepended_to_output(self):
+        cluster = [Entry(id="1", title="Test", summary="Summary", link="http://a.com", source_name="A")]
+        mock_response = self._mock_groq()
+        with patch("newsbot.ai._call_groq_with_retry", return_value=mock_response.choices[0].message.content):
             result = rewrite_with_ai(cluster, header="📰 1/3 · January 16, 2026")
         assert result.startswith("📰 1/3 · January 16, 2026\n\n")
         assert "Test Story" in result
 
     def test_no_header(self):
         cluster = [Entry(id="1", title="Test", summary="Summary", link="http://a.com", source_name="A")]
-        from unittest.mock import MagicMock, patch
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '{"urgency": "analysis", "category": "ai", "headline": "Test Story", "summary": "A summary", "key_points": ["point"], "tags": ["Tag"]}'
-        with patch("ai.client") as mock_client:
-            mock_client.chat.completions.create.return_value = mock_response
+        mock_response = self._mock_groq()
+        with patch("newsbot.ai._call_groq_with_retry", return_value=mock_response.choices[0].message.content):
             result = rewrite_with_ai(cluster, header=None)
         assert not result.startswith("📰")
         assert "Test Story" in result
+
+
+class TestRewriteWithAi:
+    def test_fallback_on_none_output(self):
+        cluster = [Entry(id="1", title="Fallback Test", summary="Summary", link="http://a.com", source_name="A")]
+        with patch("newsbot.ai._call_groq_with_retry", return_value=None):
+            result = rewrite_with_ai(cluster)
+        assert "Fallback Test" in result
+
+    def test_fallback_on_invalid_json(self):
+        cluster = [Entry(id="1", title="Bad JSON Test", summary="Summary", link="http://a.com", source_name="A")]
+        with patch("newsbot.ai._call_groq_with_retry", return_value="not json at all"):
+            result = rewrite_with_ai(cluster)
+        assert "Bad JSON Test" in result
+
+    def test_emergency_fallback_on_bad_validation(self):
+        cluster = [Entry(id="1", title="Emergency", summary="Summary", link="http://a.com", source_name="A")]
+        bad_data = '{"urgency": "INVALID_LEVEL", "category": "INVALID_CAT"}'
+        with patch("newsbot.ai._call_groq_with_retry", return_value=bad_data):
+            result = rewrite_with_ai(cluster)
+        assert "Emergency" in result
+
+    def test_urgent_overrides_non_urgent_level(self):
+        cluster = [Entry(id="1", title="Urgent Override", summary="Exploit detected", link="http://a.com", source_name="A")]
+        data = '{"urgency": "explainer", "category": "ai", "headline": "Test", "summary": "Sum", "key_points": [], "tags": []}'
+        with patch("newsbot.ai._call_groq_with_retry", return_value=data):
+            result = rewrite_with_ai(cluster, urgent=True)
+        assert "⚠️ ALERT:" in result
+
+    def test_publish_date_injected(self):
+        cluster = [Entry(id="1", title="Date Test", summary="Summary", link="http://a.com", source_name="A", published_date="Jul 16, 2026")]
+        data = '{"urgency": "analysis", "category": "ai", "headline": "Date Test", "summary": "Summary", "key_points": [], "tags": []}'
+        with patch("newsbot.ai._call_groq_with_retry", return_value=data):
+            result = rewrite_with_ai(cluster)
+        assert "📅 Jul 16, 2026" in result

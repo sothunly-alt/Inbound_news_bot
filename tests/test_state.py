@@ -1,13 +1,10 @@
 """Tests for state.py — FileState backend (no Redis required)."""
 
 import os
-import sys
 import tempfile
 import threading
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from state import FileState, reset_state
+from newsbot.state import FileState, reset_state
 
 
 class TestFileState:
