@@ -33,10 +33,10 @@ import time as time_mod
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
 from newsbot.bot import fetch_and_post, fetch_urgent_and_post
+from newsbot import config
 from newsbot.config import (
     FETCH_COOLDOWN_SECONDS,
     POLL_INTERVAL_SECONDS,
-    TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
     TIMEZONE,
@@ -155,7 +155,7 @@ def main() -> None:
 
     threading.Thread(target=start_health_server, daemon=True).start()
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
 
     _add_command(app, "start", start_command)
     _add_command(app, "stop", stop_command)
