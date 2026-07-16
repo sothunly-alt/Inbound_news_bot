@@ -302,7 +302,7 @@ def pick_image_url(cluster: list[Entry]) -> str | None:
 def _build_prompt(cluster: list[Entry], source_note: str) -> str:
     """Build the AI prompt for a cluster of related stories."""
     headlines = "\n".join(
-        f"- [{e.source_name}] {e.title}: {e.summary[:200]}"
+        f"- [{e.source_name}] {e.title}: {e.summary[:200]} (Published: {e.published_date or 'unknown date'})"
         for e in cluster[:5]
     )
     return f"""You are a tech news bot analyzing stories for a Telegram channel.
@@ -322,7 +322,8 @@ Given the following stories about the same event, return a JSON object with thes
   "what_to_do": ["actionable steps if alert/breaking"],
   "context": "why this matters, background or precedent",
   "tldr": "one sentence summary",
-  "tags": ["Topic1", "Topic2", "Topic3"]
+  "tags": ["Topic1", "Topic2", "Topic3"],
+  "published_date": "the publication date from the sources, e.g. 'Jul 16, 2026'"
 }}
 
 Urgency classification:
@@ -338,7 +339,7 @@ Category classification:
 - "cybersecurity": vulnerabilities, breaches, threats, malware, security research, ransomware
 - "defi": crypto tokens, DeFi protocols, blockchain, exchanges, Web3
 - "big_tech": Apple, Google, Meta, Microsoft, Amazon, Netflix — product moves, strategy, antitrust
-- "hardware": chips, GPUs, CPUs, devices, phones, wearables, robotics,半导体
+- "hardware": chips, GPUs, CPUs, devices, phones, wearables, robotics
 - "science": research breakthroughs, academic papers, quantum, materials, space, batteries
 - "regulation": government policy, legislation, antitrust, privacy law, compliance, court rulings
 
@@ -437,10 +438,12 @@ def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | No
 
     data["source_name"] = source_name_str
 
+    # Inject publication date from the primary entry
     primary_date = cluster[0].published_date if cluster else None
     if primary_date:
         data["published_date"] = primary_date
 
+    # Override urgency if caller specified urgent
     if urgent and data.get("urgency") not in ("breaking", "alert"):
         data["urgency"] = "alert"
 
@@ -467,4 +470,5 @@ def _fallback_data(cluster: list[Entry], urgent: bool) -> dict:
         "summary": summary,
         "key_points": [f"Reported by: {', '.join(source_names[:3])}"],
         "tags": ["News"],
+        "published_date": primary.published_date or "",
     }
