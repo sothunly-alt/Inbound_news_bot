@@ -5,3 +5,4 @@ __pycache__/
 .env
 subscribers.json
 posted_ids.json
+posted_titles.json

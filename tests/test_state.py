@@ -1,12 +1,10 @@
 """Tests for state.py — FileState backend (no Redis required)."""
 
 import os
-import sys
 import tempfile
+import threading
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from state import FileState, reset_state
+from newsbot.state import FileState, reset_state
 
 
 class TestFileState:
@@ -20,6 +18,9 @@ class TestFileState:
         for f in [self._sub_path, self._posted_path]:
             if os.path.exists(f):
                 os.remove(f)
+        titles_path = self._posted_path.replace(".json", "_titles.json")
+        if os.path.exists(titles_path):
+            os.remove(titles_path)
         os.rmdir(self._tmp)
         reset_state()
 
@@ -78,3 +79,62 @@ class TestFileState:
     def test_add_posted_ids_to_empty(self):
         self.state.add_posted_ids({"x"})
         assert self.state.load_posted_ids() == {"x"}
+
+    def test_atomic_write_no_temp_files_left(self):
+        self.state.save_subscribers({999})
+        dir_contents = os.listdir(self._tmp)
+        tmp_files = [f for f in dir_contents if f.endswith(".tmp")]
+        assert tmp_files == [], f"Temp files left behind: {tmp_files}"
+
+    def test_atomic_write_survives_corruption_check(self):
+        self.state.save_posted_ids({"a", "b"})
+        assert self.state.load_posted_ids() == {"a", "b"}
+        self.state.add_posted_ids({"c"})
+        assert self.state.load_posted_ids() == {"a", "b", "c"}
+
+    def test_add_posted_titles_merges(self):
+        self.state.save_posted_titles({"title1"})
+        self.state.add_posted_titles({"title2"})
+        assert self.state.load_posted_titles() == {"title1", "title2"}
+
+    def test_add_posted_titles_no_duplicates(self):
+        self.state.save_posted_titles({"a", "b"})
+        self.state.add_posted_titles({"b", "c"})
+        assert self.state.load_posted_titles() == {"a", "b", "c"}
+
+
+class TestFileStateThreadSafety:
+    def setup_method(self):
+        self._tmp = tempfile.mkdtemp()
+        self._sub_path = os.path.join(self._tmp, "subscribers.json")
+        self._posted_path = os.path.join(self._tmp, "posted_ids.json")
+        self.state = FileState(self._sub_path, self._posted_path)
+
+    def teardown_method(self):
+        for f in [self._sub_path, self._posted_path]:
+            if os.path.exists(f):
+                os.remove(f)
+        titles_path = self._posted_path.replace(".json", "_titles.json")
+        if os.path.exists(titles_path):
+            os.remove(titles_path)
+        os.rmdir(self._tmp)
+        reset_state()
+
+    def test_concurrent_add_posted_ids(self):
+        errors = []
+
+        def add_ids(chunk):
+            try:
+                self.state.add_posted_ids(chunk)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=add_ids, args=({f"id-{i}"},)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Concurrent writes raised: {errors}"
+        result = self.state.load_posted_ids()
+        assert len(result) == 20

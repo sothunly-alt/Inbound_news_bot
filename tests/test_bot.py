@@ -1,35 +1,16 @@
-<<<<<<< HEAD
-"""Tests for bot.py — broadcast and fetch_and_post logic."""
-
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-
-class TestBotImports:
-    def test_import_bot(self):
-        from bot import fetch_and_post
-        assert callable(fetch_and_post)
-=======
 """Tests for bot.py — ranking, StoryPost keyboard, and prepare helpers."""
 
 import asyncio
-import sys
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from feeds import Entry
-from bot import (
+from newsbot.bot import (
     StoryPost,
     _rank_clusters,
     _source_keyboard,
-    _prepare_digest,
-    _prepare_urgent,
+    _prepare_entries,
     broadcast_stories,
 )
+from newsbot.feeds import Entry
 
 
 def _entry(
@@ -51,7 +32,7 @@ def _entry(
 
 class TestBotImports:
     def test_import_bot(self):
-        from bot import fetch_and_post, fetch_urgent_and_post
+        from newsbot.bot import fetch_and_post, fetch_urgent_and_post
         assert callable(fetch_and_post)
         assert callable(fetch_urgent_and_post)
 
@@ -84,48 +65,48 @@ class TestSourceKeyboard:
         assert markup.inline_keyboard[1][0].text == "Source 2"
 
 
-class TestPrepareDigest:
-    @patch("bot.cluster_entries")
-    @patch("bot.collect_new_entries")
-    @patch("bot.get_state")
+class TestPrepareEntries:
+    @patch("newsbot.bot.cluster_entries")
+    @patch("newsbot.bot.collect_new_entries")
+    @patch("newsbot.bot.get_state")
     def test_returns_separate_stories(self, mock_state, mock_collect, mock_cluster):
         mock_state.return_value.load_posted_ids.return_value = set()
+        mock_state.return_value.load_posted_titles.return_value = set()
         mock_collect.return_value = [_entry(str(i), link=f"http://x.com/{i}") for i in range(12)]
         mock_cluster.return_value = [
             [_entry(str(i), title=f"T{i}", link=f"http://x.com/{i}")] for i in range(12)
         ]
 
         def fake_rewrite(cluster, urgent=False, header=None):
-            prefix = f"{header}\n\n" if header else ""
-            return f"{prefix}<b>{cluster[0].title}</b>\n\n▸ What happened: x"
+            return f"<b>{cluster[0].title}</b>\n\nWhat happened: x"
 
-        with patch("bot.rewrite_with_ai", side_effect=fake_rewrite) as mock_ai:
-            stories = _prepare_digest()
+        with patch("newsbot.bot.rewrite_with_ai", side_effect=fake_rewrite) as mock_ai:
+            stories = _prepare_entries(urgent=False)
         assert len(stories) == 10
         assert all(isinstance(s, StoryPost) for s in stories)
-        assert "📰 1/10" in stories[0].text
-        assert all("———" not in s.text for s in stories)
+        assert "<b>T0</b>" in stories[0].text
         assert mock_ai.call_count == 10
 
 
 class TestPrepareUrgent:
-    @patch("bot.rewrite_with_ai", return_value="<b>[URGENT: X]</b>")
-    @patch("bot.looks_urgent")
-    @patch("bot.cluster_entries")
-    @patch("bot.collect_new_entries")
-    @patch("bot.get_state")
+    @patch("newsbot.bot.rewrite_with_ai", return_value="<b>[URGENT: X]</b>")
+    @patch("newsbot.bot.looks_urgent")
+    @patch("newsbot.bot.cluster_entries")
+    @patch("newsbot.bot.collect_new_entries")
+    @patch("newsbot.bot.get_state")
     def test_only_urgent_and_skips_posted(
         self, mock_state, mock_collect, mock_cluster, mock_urgent, mock_ai
     ):
         mock_state.return_value.load_posted_ids.return_value = {"already"}
+        mock_state.return_value.load_posted_titles.return_value = set()
         mock_collect.return_value = [_entry("new1"), _entry("new2")]
         mock_cluster.return_value = [[_entry("new1")], [_entry("new2")]]
         mock_urgent.side_effect = [True, False]
 
-        stories = _prepare_urgent()
+        stories = _prepare_entries(urgent=True)
         assert len(stories) == 1
         assert stories[0].entry_ids == {"new1"}
-        mock_collect.assert_called_once_with({"already"})
+        mock_collect.assert_called_once_with({"already"}, set())
 
 
 def test_broadcast_stories_sends_separately_with_button():
@@ -144,8 +125,8 @@ def test_broadcast_stories_sends_separately_with_button():
     context.bot = mock_bot
 
     async def _run():
-        with patch("bot.TELEGRAM_CHANNEL_ID", -100), patch("bot.TELEGRAM_THREAD_ID", None), patch(
-            "bot.get_state"
+        with patch("newsbot.bot.TELEGRAM_CHANNEL_ID", -100), patch("newsbot.bot.TELEGRAM_THREAD_ID", None), patch(
+            "newsbot.bot.get_state"
         ) as mock_state:
             mock_state.return_value.load_subscribers.return_value = set()
             return await broadcast_stories(context, [post1, post2])
@@ -160,4 +141,3 @@ def test_broadcast_stories_sends_separately_with_button():
     photo_kwargs = mock_bot.send_photo.await_args.kwargs
     assert photo_kwargs["photo"] == "https://img.com/x.jpg"
     assert photo_kwargs["reply_markup"].inline_keyboard[0][0].url == "https://b.com"
->>>>>>> 37ec812f6fa417b744287950b8733a1819ba8b47

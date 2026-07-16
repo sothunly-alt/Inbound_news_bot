@@ -6,11 +6,12 @@ new story individually as soon as it's found — no fixed schedule, no
 digest bundling.
 
 Schedule:
-  - Digest posts at 5:00 AM and 5:00 PM (Phnom Penh time)
-  - Use /fetch for on-demand news
+  - Continuous polling every POLL_INTERVAL_SECONDS — new stories post immediately
+  - Hourly urgent keyword check for time-sensitive stories
+  - Use /fetch for on-demand checks
 
 Setup:
-    pip install -r requirements.txt
+  pip install -e .
 
 Env vars needed — create a .env file in this folder (see .env.example):
     TELEGRAM_BOT_TOKEN     - from @BotFather
@@ -22,22 +23,29 @@ How people join:
     and get every future news post automatically. /stop unsubscribes.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
+import time as time_mod
 
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
-from bot import fetch_and_post, load_subscribers, save_subscribers
-from config import (
+from newsbot.bot import fetch_and_post, fetch_urgent_and_post
+from newsbot.config import (
+    FETCH_COOLDOWN_SECONDS,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
     TIMEZONE,
+    URGENT_CHECK_INTERVAL_SECONDS,
+    URGENT_FIRST_DELAY_SECONDS,
+    validate_config,
 )
-from health import start_health_server
-from state import get_state
+from newsbot.health import start_health_server
+from newsbot.state import get_state
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -50,9 +58,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+_fetch_last_run: dict[int, float] = {}
 
-async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled digest job — all new stories at 5 AM and 5 PM."""
+
+async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Continuous polling job — checks all feeds and posts new stories immediately."""
     await fetch_and_post(context)
 
 
@@ -82,7 +92,7 @@ async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         state.save_subscribers(subscribers)
         await _reply(
             update,
-            "Subscribed! Digests at 5 AM / 5 PM (Phnom Penh). Urgent alerts send immediately.",
+            "Subscribed! New stories post as soon as they're found. Urgent alerts send immediately.",
         )
     else:
         await _reply(update, "You're already subscribed.")
@@ -104,11 +114,20 @@ async def stop_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def fetch_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Manual trigger: /fetch — runs a full digest now and reports the outcome."""
+    """Manual trigger: /fetch — runs a full check now and reports the outcome."""
     effective_chat = getattr(update, "effective_chat", None)
-    chat_id = effective_chat.id if effective_chat else "?"
-    logger.info("[/fetch] from chat_id=%s", chat_id)
+    chat_id = effective_chat.id if effective_chat else 0
 
+    now = time_mod.time()
+    last_run = _fetch_last_run.get(chat_id, 0)
+    remaining = FETCH_COOLDOWN_SECONDS - (now - last_run)
+    if remaining > 0:
+        minutes = int(remaining // 60) + 1
+        await _reply(update, f"Please wait {minutes} minute{'s' if minutes > 1 else ''} before requesting another fetch.")
+        return
+
+    logger.info("[/fetch] from chat_id=%s", chat_id)
+    _fetch_last_run[chat_id] = now
     await _reply(update, "Fetching latest tech news...")
 
     try:
@@ -132,7 +151,8 @@ def _add_command(app: Application, name: str, handler: object) -> None:
 
 def main() -> None:
     """Entry point — initialize all subsystems and start the bot."""
-    # Bind PORT first so Render's port scanner succeeds during startup.
+    validate_config()
+
     threading.Thread(target=start_health_server, daemon=True).start()
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -150,20 +170,27 @@ def main() -> None:
     else:
         logger.warning("TELEGRAM_CHANNEL_ID not set — only /start subscribers get posts.")
 
-    # Scheduled digests: 5:00 AM and 5:00 PM, Phnom Penh time
-    assert app.job_queue is not None, "job_queue must be available (install python-telegram-bot[job-queue])"
-    app.job_queue.run_daily(digest_job, time=dt_time(hour=5, minute=0, tzinfo=TIMEZONE))
-    app.job_queue.run_daily(digest_job, time=dt_time(hour=17, minute=0, tzinfo=TIMEZONE))
+    if app.job_queue is None:
+        raise RuntimeError("job_queue must be available (install python-telegram-bot[job-queue])")
 
-    logger.info(
-        "Bot running. Digests at 5 AM / 5 PM (Phnom Penh). Use /fetch for on-demand."
+    # Continuous polling instead of fixed digest times — new stories post
+    # as soon as they're found, checked every POLL_INTERVAL_SECONDS.
+    app.job_queue.run_repeating(
+        poll_job,
+        interval=POLL_INTERVAL_SECONDS,
+        first=10,
+    )
+    app.job_queue.run_repeating(
+        urgent_job,
+        interval=URGENT_CHECK_INTERVAL_SECONDS,
+        first=URGENT_FIRST_DELAY_SECONDS,
     )
 
-    # Python 3.12+ no longer auto-creates an event loop in the main thread
-    try:
-        asyncio.get_event_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+    logger.info(
+        "Bot running. Polling every %ds. Urgent checks every %ds. Use /fetch for on-demand.",
+        POLL_INTERVAL_SECONDS,
+        URGENT_CHECK_INTERVAL_SECONDS,
+    )
 
     app.run_polling(drop_pending_updates=True)
 

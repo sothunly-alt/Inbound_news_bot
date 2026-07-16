@@ -1,22 +1,23 @@
 # Inbound News Bot
 
-A Telegram bot that fetches tech, crypto, and cybersecurity news from 8 trusted RSS feeds, clusters related stories, rewrites them with AI into a clean fixed format, and broadcasts daily digests to subscribers.
+A Telegram bot that fetches tech, crypto, and cybersecurity news from 15 RSS feeds, clusters related stories, rewrites them with AI into urgency-based templates, and broadcasts digests to subscribers.
 
 - **Schedule**: 5 AM & 5 PM Phnom Penh time (UTC+7)
-- **On-demand**: `/fetch` triggers a digest immediately
+- **On-demand**: `/fetch` triggers a digest immediately (5-minute cooldown)
 - **Format**: Facts only — no opinions, no speculation, no buy/sell advice
 
 ## How It Works
 
 ```
-8 RSS Feeds → collect → cluster → looks_urgent → rewrite_with_ai → broadcast
+15 RSS Feeds → fetch (with timeout) → cluster → looks_urgent → rewrite_with_ai → broadcast
 ```
 
-1. **Fetch** — pulls latest items from 8 RSS feeds (5 per feed max)
+1. **Fetch** — pulls latest items from 15 RSS feeds (5 per feed max, 15s timeout per feed)
 2. **Cluster** — groups related headlines using title+summary similarity (threshold 0.45)
-3. **Rewrite** — Groq (Llama 3.3 70B) rewrites into a fixed format with source links
-4. **Broadcast** — sends a single digest message to the channel + all subscribers
-5. **Dedup** — logs posted entry IDs so nothing repeats
+3. **Rewrite** — Groq (Llama 3.3 70B) classifies urgency + category and returns structured JSON
+4. **Render** — one of 5 templates is selected based on urgency level
+5. **Broadcast** — sends story to the channel thread + all subscribers
+6. **Dedup** — logs posted entry IDs so nothing repeats
 
 ## Setup
 
@@ -45,37 +46,148 @@ PORT=                   # health server port (default: 10000)
 |---------|-------------|
 | `/start` | Subscribe to daily digests |
 | `/stop` | Unsubscribe |
-| `/fetch` | Trigger a digest right now |
+| `/fetch` | Trigger a digest right now (5-min cooldown) |
 
-## Output Format
+## News Categories
 
-**Normal:**
+Stories are classified into one of 8 categories:
+
+| Category | Topics |
+|----------|--------|
+| Startups | Funding rounds, launches, founder stories, acquisitions |
+| AI & ML | Models, tools, research breakthroughs, AI applications |
+| Cybersecurity | Vulnerabilities, breaches, threats, security research |
+| DeFi & Crypto | Tokens, protocols, blockchain, exchanges, Web3 |
+| Big Tech | Apple, Google, Meta, Microsoft, Amazon — product moves, antitrust |
+| Hardware & Devices | Chips, GPUs, phones, wearables, robotics |
+| Science & Research | Breakthroughs, quantum, materials, space, batteries |
+| Regulation & Policy | Government policy, legislation, privacy law, court rulings |
+
+## Output Templates
+
+Each story is classified by urgency and rendered with the matching template:
+
+**Breaking** 🚨 — Active exploit, major outage, critical vulnerability:
 ```
-**<title>**
-- What happened: <one sentence>
-- Why it matters: <one sentence>
-- Extra context: <one sentence>
-- Sources: <link> | <link>
+🚨 CRITICAL: <headline>
+📂 Cybersecurity
+
+<summary>
+
+📊 KEY METRICS:
+• metric 1
+• metric 2
+
+⚠️ WHY IT MATTERS:
+<context>
+
+🔍 DETAILS:
+• point 1
+• point 2
+
+⏰ <timeline>
+
+📌 Source: <name> | <links>
+
+#Tag1 #Tag2
 ```
 
-**Urgent:**
+**Alert** ⚠️ — Vulnerability disclosed, action required:
 ```
-**[URGENT: <title>]**
-- What happened: <one sentence>
-- Why it matters: <one sentence>
-- Sources: <link> | <link>
+⚠️ ALERT: <headline>
+📂 <category>
+
+<summary>
+
+🛡️ WHAT TO DO:
+• action 1
+• action 2
+
+📍 AFFECTED:
+• affected group
+
+⏰ <timeline>
+
+📌 Source: <name> | <links>
+
+#Tag1 #Tag2
+```
+
+**Analysis** 📊 — Regulation, governance, policy, research:
+```
+📊 <headline>
+📂 <category>
+
+<summary>
+
+💡 KEY POINTS:
+• point 1
+• point 2
+
+📈 MARKET IMPACT:
+<impact>
+
+🎯 WHO THIS AFFECTS:
+• group 1
+
+💬 CONTEXT:
+<context>
+
+📌 Source: <name> | <links>
+
+#Tag1 #Tag2
+```
+
+**Market** 💹 — Price action, trading volume, token launches:
+```
+💹 <headline>
+📂 <category>
+
+<summary>
+
+📊 KEY POINTS:
+• data 1
+• data 2
+
+📈 MARKET IMPACT:
+<impact>
+
+📌 Source: <name> | <links>
+
+#Tag1 #Tag2
+```
+
+**Explainer** 📚 — Education, how something works, deep dive:
+```
+📚 EXPLAINER: <headline>
+📂 <category>
+
+<summary>
+
+🔹 KEY POINTS:
+• point 1
+
+🔹 WHAT TO WATCH:
+• trend 1
+
+💡 TL;DR:
+<one-line summary>
+
+📌 Source: <name> | <links>
+
+#Tag1 #Tag2
 ```
 
 ## Project Structure
 
 ```
 news_bot.py     Entry point — scheduler, handlers, main loop
-config.py       Configuration constants and env vars
-feeds.py        RSS fetching, normalization, clustering, urgency detection
-ai.py           AI rewriting with output validation and fallback
-bot.py          State management (subscribers, dedup) and broadcast logic
+config.py       RSS feeds (15), categories, urgency levels, constants
+feeds.py        RSS fetching (with timeout), normalization, clustering, urgency detection
+ai.py           AI prompt, structured JSON parsing (3-level fallback), 5 templates, retry logic
+bot.py          State management, broadcast logic, auto-unsubscribe on blocked users
 health.py       HTTP health server for Render
-tests/          38 tests (feeds, AI validation, state management)
+tests/          83 tests (feeds, AI validation, templates, state management)
 ```
 
 ## Testing
@@ -84,6 +196,14 @@ tests/          38 tests (feeds, AI validation, state management)
 python -m pytest tests/ -v
 ruff check . --exclude venv
 ```
+
+## Reliability Features
+
+- **AI retry** — 3 attempts with exponential backoff on API failures
+- **Feed timeout** — 15s timeout per feed; slow/dead feeds don't block the pipeline
+- **Rate limiting** — `/fetch` limited to once per 5 minutes per chat
+- **Auto-unsubscribe** — users who block the bot are automatically removed
+- **Structured JSON** — AI output parsed with 3-level fallback (direct → code fence → regex)
 
 ## Deployment
 
