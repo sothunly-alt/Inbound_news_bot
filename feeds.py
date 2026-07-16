@@ -8,6 +8,7 @@ import re
 import time
 from calendar import timegm
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import feedparser
@@ -43,6 +44,18 @@ _IMG_SRC_RE = re.compile(
 )
 
 
+def _format_entry_date(raw_entry: Any) -> Optional[str]:
+    """Extract and format the publication date from an RSS entry as 'Mon DD, YYYY'."""
+    parsed = getattr(raw_entry, "published_parsed", None) or getattr(raw_entry, "updated_parsed", None)
+    if parsed is None:
+        return None
+    try:
+        dt = datetime.fromtimestamp(timegm(parsed), tz=timezone.utc)
+        return dt.strftime("%b %d, %Y")
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_entry_too_old(raw_entry: Any, max_age_hours: int = MAX_ENTRY_AGE_HOURS) -> bool:
     """Check if an RSS entry is older than max_age_hours.
 
@@ -69,6 +82,7 @@ class Entry:
     link: str
     source_name: str
     image_url: Optional[str] = None
+    published_date: Optional[str] = None
 
 
 def extract_image_url(raw_entry: Any) -> Optional[str]:
@@ -229,6 +243,7 @@ def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = N
                 link=entry.link,
                 source_name=source_name,
                 image_url=extract_image_url(entry),
+                published_date=_format_entry_date(entry),
             ))
             count += 1
 

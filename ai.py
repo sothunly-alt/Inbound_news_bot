@@ -126,6 +126,7 @@ def render_template(data: dict) -> str:
     summary = _escape(data["summary"])
     key_points = data.get("key_points", [])
     tags = data.get("tags", [])
+    published_date = data.get("published_date", "")
 
     sections: list[str] = []
 
@@ -133,6 +134,8 @@ def render_template(data: dict) -> str:
         sections.append(f"🚨 CRITICAL: <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -162,6 +165,8 @@ def render_template(data: dict) -> str:
         sections.append(f"⚠️ ALERT: <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -186,6 +191,8 @@ def render_template(data: dict) -> str:
         sections.append(f"💹 <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -204,6 +211,8 @@ def render_template(data: dict) -> str:
         sections.append(f"📚 EXPLAINER: <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -227,6 +236,8 @@ def render_template(data: dict) -> str:
         sections.append(f"📊 <b>{headline}</b>")
         if category_label:
             sections.append(f"📂 {category_label}")
+        if published_date:
+            sections.append(f"📅 {_escape(published_date)}")
         sections.append("")
         sections.append(summary)
 
@@ -426,6 +437,11 @@ Stories covering the same event:
 
     # Inject source info
     data["source_name"] = source_name_str
+
+    # Inject published date from first entry
+    primary_date = cluster[0].published_date if cluster else None
+    if primary_date:
+        data["published_date"] = primary_date
 
     # Override urgency if caller specified urgent
     if urgent and data.get("urgency") not in ("breaking", "alert"):
