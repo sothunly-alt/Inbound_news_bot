@@ -102,15 +102,15 @@ GROQ_MAX_TOKENS: int = 500
 # ---- Scheduling ----
 TIMEZONE = ZoneInfo("Asia/Phnom_Penh")
 DIGEST_MIN_SOURCES: int = 2
-DIGEST_MAX_STORIES: int = 10
+DIGEST_MAX_STORIES: int = 5
 DIGEST_SCHEDULE_HOUR_AM: int = 5
 DIGEST_SCHEDULE_HOUR_PM: int = 17
 URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 60  # once per hour
 URGENT_FIRST_DELAY_SECONDS: int = 60
-POLL_INTERVAL_SECONDS: int = int(os.environ.get("POLL_INTERVAL_SECONDS", "1200"))
+POLL_INTERVAL_SECONDS: int = int(os.environ.get("POLL_INTERVAL_SECONDS", "7200"))
 
 # ---- Rate limiting ----
-MAX_URGENT_POSTS_PER_RUN: int = 5
+MAX_URGENT_POSTS_PER_RUN: int = 2
 FETCH_COOLDOWN_SECONDS: int = 300  # 5 minutes
 
 # ---- Link caps ----
