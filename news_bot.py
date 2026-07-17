@@ -1,14 +1,14 @@
 """Telegram Tech News Bot - v4
 
 Fetches tech RSS headlines from multiple trusted sources, clusters related
-stories, rewrites them with AI into a fixed Telegram format, and posts each
-new story individually as soon as it's found — no fixed schedule, no
-digest bundling.
+stories, rewrites them with AI into a fixed Telegram format, and posts
+regular digest stories on a fixed schedule, with urgent stories checked
+separately and posted anytime.
 
 Schedule:
-  - Continuous polling every POLL_INTERVAL_SECONDS — new stories post immediately
-  - Hourly urgent keyword check for time-sensitive stories
-  - Use /fetch for on-demand checks
+  - Regular digest: fixed times at 5am and 5pm (DIGEST_SCHEDULE_HOUR_AM/PM)
+  - Urgent keyword check: hourly, posts immediately regardless of time
+  - Use /fetch for on-demand checks (subject to cooldown)
 
 Setup:
   pip install -e .
@@ -16,7 +16,6 @@ Setup:
 Env vars needed — create a .env file in this folder (see .env.example):
     TELEGRAM_BOT_TOKEN     - from @BotFather
     GROQ_API_KEY           - your Groq API key (console.groq.com/keys, free tier)
-    POLL_INTERVAL_SECONDS  - optional, seconds between polls (default 1200 = 20 min)
 
 How people join:
     Anyone sends /start to the bot once. They're saved to subscribers.json
@@ -26,6 +25,7 @@ How people join:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import threading
 import time as time_mod
@@ -35,8 +35,9 @@ from telegram.ext import Application, CommandHandler, ContextTypes, filters
 from newsbot.bot import fetch_and_post, fetch_urgent_and_post
 from newsbot import config
 from newsbot.config import (
+    DIGEST_SCHEDULE_HOUR_AM,
+    DIGEST_SCHEDULE_HOUR_PM,
     FETCH_COOLDOWN_SECONDS,
-    POLL_INTERVAL_SECONDS,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
     TIMEZONE,
@@ -62,7 +63,7 @@ _fetch_last_run: dict[int, float] = {}
 
 
 async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Continuous polling job — checks all feeds and posts new stories immediately."""
+    """Fixed-schedule digest job — runs at 5am and 5pm, posts new stories found since last run."""
     await fetch_and_post(context)
 
 
@@ -92,7 +93,7 @@ async def start_command(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         state.save_subscribers(subscribers)
         await _reply(
             update,
-            "Subscribed! New stories post as soon as they're found. Urgent alerts send immediately.",
+            "Subscribed! Regular stories post at 5am and 5pm. Urgent alerts send anytime.",
         )
     else:
         await _reply(update, "You're already subscribed.")
@@ -173,12 +174,15 @@ def main() -> None:
     if app.job_queue is None:
         raise RuntimeError("job_queue must be available (install python-telegram-bot[job-queue])")
 
-    # Continuous polling instead of fixed digest times — new stories post
-    # as soon as they're found, checked every POLL_INTERVAL_SECONDS.
-    app.job_queue.run_repeating(
+    # Fixed digest schedule — regular stories post at 5am and 5pm only.
+    # Urgent stories still get their own separate hourly check below.
+    app.job_queue.run_daily(
         poll_job,
-        interval=POLL_INTERVAL_SECONDS,
-        first=10,
+        time=dt.time(hour=DIGEST_SCHEDULE_HOUR_AM, minute=0, tzinfo=TIMEZONE),
+    )
+    app.job_queue.run_daily(
+        poll_job,
+        time=dt.time(hour=DIGEST_SCHEDULE_HOUR_PM, minute=0, tzinfo=TIMEZONE),
     )
     app.job_queue.run_repeating(
         urgent_job,
@@ -187,8 +191,10 @@ def main() -> None:
     )
 
     logger.info(
-        "Bot running. Polling every %ds. Urgent checks every %ds. Use /fetch for on-demand.",
-        POLL_INTERVAL_SECONDS,
+        "Bot running. Digest at %02d:00 and %02d:00 (%s). Urgent checks every %ds. Use /fetch for on-demand.",
+        DIGEST_SCHEDULE_HOUR_AM,
+        DIGEST_SCHEDULE_HOUR_PM,
+        TIMEZONE,
         URGENT_CHECK_INTERVAL_SECONDS,
     )
 
