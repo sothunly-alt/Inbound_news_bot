@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
@@ -61,6 +62,42 @@ def _source_keyboard(post: StoryPost) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def _resolve_channel_target() -> tuple[int | None, int | None]:
+    """Return (channel_id, thread_id), falling back to a fresh env read.
+
+    Guards against a startup-timing race where validate_config() ran before
+    TELEGRAM_CHANNEL_ID was fully propagated by the platform, which would
+    otherwise leave TELEGRAM_CHANNEL_ID as None for the life of the process
+    even though the env var is actually set.
+    """
+    if TELEGRAM_CHANNEL_ID is not None:
+        return TELEGRAM_CHANNEL_ID, TELEGRAM_THREAD_ID
+
+    raw_channel = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
+    if not raw_channel:
+        return None, None
+    try:
+        channel_id = int(raw_channel)
+    except ValueError:
+        logger.error("TELEGRAM_CHANNEL_ID env var is set but not a valid integer: %r", raw_channel)
+        return None, None
+
+    thread_id = None
+    raw_thread = os.environ.get("TELEGRAM_THREAD_ID", "").strip()
+    if raw_thread:
+        try:
+            thread_id = int(raw_thread)
+        except ValueError:
+            logger.error("TELEGRAM_THREAD_ID env var is set but not a valid integer: %r", raw_thread)
+
+    logger.warning(
+        "TELEGRAM_CHANNEL_ID was unresolved in cached config at startup but found in "
+        "env at runtime (channel=%s thread=%s) — using it. Investigate startup config load.",
+        channel_id, thread_id,
+    )
+    return channel_id, thread_id
+
+
 async def broadcast_stories(
     context: ContextTypes.DEFAULT_TYPE,
     stories: list[StoryPost],
@@ -68,12 +105,16 @@ async def broadcast_stories(
     """Send each story separately. Returns entry IDs that succeeded at least once."""
     targets: dict[int, int | None] = {}
 
-    if TELEGRAM_CHANNEL_ID is not None:
-        targets[TELEGRAM_CHANNEL_ID] = TELEGRAM_THREAD_ID
+    channel_id, thread_id_for_channel = _resolve_channel_target()
+    if channel_id is not None:
+        targets[channel_id] = thread_id_for_channel
 
     state = get_state()
     for chat_id in state.load_subscribers():
-        targets.setdefault(int(chat_id), None)
+        chat_id = int(chat_id)
+        # A subscriber that happens to be the known channel still gets routed
+        # to the right topic/thread, instead of silently falling back to None.
+        targets.setdefault(chat_id, thread_id_for_channel if chat_id == channel_id else None)
 
     if not targets:
         logger.warning("No channel or subscribers configured — nothing to send.")
