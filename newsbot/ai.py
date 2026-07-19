@@ -112,6 +112,16 @@ def _bullet_list(items: list[str], limit: int = 5) -> str:
     return "\n".join(f"• {_html_escape(item)}" for item in items[:limit])
 
 
+def _dedup_timeline(timeline: str, published_date: str) -> str:
+    """Strip timeline if it just echoes the publication date."""
+    if not timeline or not published_date:
+        return timeline
+    cleaned = re.sub(r"^(published\s+(?:on|:)?\s*)", "", timeline, flags=re.IGNORECASE).strip()
+    if cleaned.lower() == published_date.strip().lower():
+        return ""
+    return timeline
+
+
 _CATEGORY_LABELS: dict[str, str] = {
     "startups": "Startups",
     "ai": "AI & ML",
@@ -180,7 +190,7 @@ def render_template(data: dict) -> str:
             sections.append("")
             sections.append("🔍 DETAILS:")
             sections.append(_bullet_list(key_points))
-        timeline = data.get("timeline", "")
+        timeline = _dedup_timeline(data.get("timeline", ""), data.get("published_date", ""))
         if timeline:
             sections.append("")
             sections.append(f"⏰ {_html_escape(timeline)}")
@@ -199,7 +209,7 @@ def render_template(data: dict) -> str:
             sections.append("")
             sections.append("📍 AFFECTED:")
             sections.append(_bullet_list(who))
-        timeline = data.get("timeline", "")
+        timeline = _dedup_timeline(data.get("timeline", ""), data.get("published_date", ""))
         if timeline:
             sections.append("")
             sections.append(f"⏰ {_html_escape(timeline)}")
@@ -316,7 +326,7 @@ Given the following stories about the same event, return a JSON object with thes
   "summary": "1-2 sentence summary of what happened",
   "key_points": ["point 1", "point 2", "point 3"],
   "metrics": ["metric 1 if available"],
-  "timeline": "when it happened / status timeline if available",
+  "timeline": "status timeline or resolution updates only — do NOT repeat the publication date, it is shown separately",
   "market_impact": "how it affects prices or market if relevant",
   "who_affected": ["protocol/user type affected"],
   "what_to_do": ["actionable steps if alert/breaking"],
