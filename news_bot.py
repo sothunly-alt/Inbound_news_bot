@@ -75,6 +75,23 @@ async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     await fetch_urgent_and_post(context)
 
 
+DONATION_TEXT_KM = (
+    "🧩 <b>ចូលរួមជាមួយយើង ដើម្បីស្វែងយល់ពីរឿងរ៉ាវគ្រប់ជ្រុងជ្រោយ</b>\n\n"
+    "ដើម្បីផ្តល់ជូនលោកអ្នកនូវទិដ្ឋភាពព័ត៌មានពេញលេញ Inbound Reports "
+    "មិនពឹងផ្អែកលើទស្សនៈតែមួយជ្រុងនោះទេ។ វេទិការបស់យើងធ្វើការប្រមូលផ្តុំព័ត៌មានបច្ចេកវិទ្យាពីប្រភពចម្រុះ "
+    "និង APIs ពីបណ្តាញអ៊ីនធឺណិត ដើម្បីនាំយកគ្រប់ទិដ្ឋភាពទាំងអស់មកដាក់បញ្ចូលគ្នានៅកន្លែងតែមួយ។\n\n"
+    "តាមរយៈការប្រៀបធៀបប្រភពព័ត៌មាន យើងជួយដល់អ្នកអាននៅកម្ពុជាឱ្យ៖\n\n"
+    "🌐 ចៀសផុតពីភាពរញ៉េរញ៉ៃនៃព័ត៌មាន និងមិនជាប់ផុងក្នុងការទទួលព័ត៌មានតែមួយជ្រុង។\n"
+    "⚖️ ទទួលបានទស្សនៈប្រកបដោយតុល្យភាព ជុំវិញវិស័យបច្ចេកវិទ្យា។\n"
+    "📖 ស្វែងយល់ពីសាច់រឿងទាំងមូល ដើម្បីចូលរួមលើកកម្ពស់អក្ខរកម្មឌីជីថលនៅកម្ពុជា។\n\n"
+    "ការដំណើរការប្រព័ន្ធប្រមូលផ្តុំទិន្នន័យនេះ រួមជាមួយនឹងការចំណាយលើការទាញយកទិន្នន័យ "
+    "ទាមទារឱ្យមានធនធានច្រើន។ ប្រសិនបើលោកអ្នកឱ្យតម្លៃទៅលើវេទិកាព័ត៌មានដែលផ្តល់នូវតុល្យភាព "
+    "និងមានប្រភពចម្រុះ សូមមេត្តាពិចារណាចូលរួមគាំទ្រដល់ការងាររបស់យើងខ្ញុំ!\n\n"
+    "👇 លោកអ្នកអាចធ្វើការចូលរួមវិភាគទានយ៉ាងងាយស្រួល និងរហ័ស "
+    "តាមរយៈតំណភ្ជាប់ ABA ខាងក្រោម៖\n\n"
+    '🔗 <a href="https://pay.ababank.com/oRF8/puropy03">ABA Payment Link</a>'
+)
+
 DONATION_TEXT = (
     "🧩 <b>Help Us Connect the Dots</b>\n\n"
     "To give you the full picture, Inbound Reports doesn't just rely on one perspective. "
@@ -87,7 +104,7 @@ DONATION_TEXT = (
     "Running this aggregation engine—and paying for data access—takes resources. "
     "If you value having a balanced, multi-source feed, please consider supporting our work!\n\n"
     "👇 Tap the ABA link below to make a quick contribution:\n\n"
-    "🔗 <a href=\"https://pay.ababank.com/oRF8/puropy03\">ABA Payment Link</a>"
+    '🔗 <a href="https://pay.ababank.com/oRF8/puropy03">ABA Payment Link</a>'
 )
 
 
@@ -122,7 +139,7 @@ async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     qr_path = DONATION_QR_IMAGE
 
-    # Send to channel with QR image
+    # Send to channel: Khmer first (with QR image), then English
     if channel_id is not None:
         try:
             if os.path.isfile(qr_path):
@@ -130,16 +147,22 @@ async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     await context.bot.send_photo(
                         chat_id=channel_id,
                         photo=f,
-                        caption=DONATION_TEXT,
+                        caption=DONATION_TEXT_KM,
                         parse_mode="HTML",
                     )
             else:
                 await context.bot.send_message(
                     chat_id=channel_id,
-                    text=DONATION_TEXT,
+                    text=DONATION_TEXT_KM,
                     parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
+            await context.bot.send_message(
+                chat_id=channel_id,
+                text=DONATION_TEXT,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
             if thread_id is not None:
                 logger.info("Donation message sent to channel %s thread %s", channel_id, thread_id)
             else:
@@ -147,9 +170,15 @@ async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             logger.exception("Failed to send donation message to channel %s", channel_id)
 
-    # Send text-only donation message to group chat
+    # Send text-only donation messages to group chat (Khmer then English)
     if group_chat_id is not None and group_chat_id != channel_id:
         try:
+            await context.bot.send_message(
+                chat_id=group_chat_id,
+                text=DONATION_TEXT_KM,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
             await context.bot.send_message(
                 chat_id=group_chat_id,
                 text=DONATION_TEXT,
