@@ -84,6 +84,9 @@ def _validate_ai_data(data: dict) -> tuple[bool, str | None]:
     for key in ("key_points", "metrics", "who_affected", "what_to_do", "tags"):
         if key in data and not isinstance(data[key], list):
             return False, f"Key '{key}' must be a list"
+        km_key = f"{key}_km"
+        if km_key in data and not isinstance(data[km_key], list):
+            return False, f"Key '{km_key}' must be a list"
 
     return True, None
 
@@ -134,145 +137,207 @@ _CATEGORY_LABELS: dict[str, str] = {
 }
 
 
-def _render_header(data: dict) -> list[str]:
-    """Render the shared header (headline prefix, category, date) for all templates."""
-    headline = _html_escape(data.get("headline", "Untitled"))
+_SEPARATOR = "\n\n➖➖➖➖➖➖➖\n\n"
+
+
+def _get(data: dict, key: str, km: bool = False) -> Any:
+    """Get a field from data, using _km variant if km=True, falling back to English."""
+    if km:
+        return data.get(f"{key}_km", data.get(key, ""))
+    return data.get(key, "")
+
+
+def _get_list(data: dict, key: str, km: bool = False) -> list[str]:
+    """Get a list field from data, using _km variant if km=True, falling back to English."""
+    if km:
+        return data.get(f"{key}_km", data.get(key, []))
+    return data.get(key, [])
+
+
+def _render_one_language(data: dict, *, km: bool, urgency: str) -> str:
+    """Render a single-language version of the story."""
+    headline = _html_escape(str(_get(data, "headline", km=km) or "Untitled"))
+    summary = _html_escape(str(_get(data, "summary", km=km) or ""))
+    key_points = _get_list(data, "key_points", km=km)
     category_label = _CATEGORY_LABELS.get(data.get("category", ""), "")
     published_date = data.get("published_date", "")
+
     sections: list[str] = []
-    if category_label:
-        sections.append(f"📂 {category_label}")
-    if published_date:
-        sections.append(f"📅 {_html_escape(published_date)}")
-    if sections:
+
+    if urgency == "breaking":
+        critical = "⚠️ ប្រកាសអាសន្ន" if km else "🚨 CRITICAL"
+        sections.append(f"{critical}: <b>{headline}</b>")
+        if category_label or published_date:
+            parts = []
+            if category_label:
+                parts.append(f"📂 {category_label}")
+            if published_date:
+                parts.append(f"📅 {_html_escape(published_date)}")
+            sections.append(" | ".join(parts))
         sections.append("")
-    return sections
+        sections.append(summary)
+        metrics = _get_list(data, "metrics", km=km)
+        if metrics:
+            sections.append("")
+            sections.append("📊 " + ("សូម្បីតែសំខាន់ៗ" if km else "KEY METRICS:"))
+            sections.append(_bullet_list(metrics))
+        what_to_do = _get_list(data, "what_to_do", km=km)
+        if what_to_do:
+            sections.append("")
+            sections.append("🛡️ " + ("ជំហានដែលត្រូវធ្វើ" if km else "WHAT TO DO:"))
+            sections.append(_bullet_list(what_to_do))
+        context_val = str(_get(data, "context", km=km) or "")
+        if context_val:
+            sections.append("")
+            sections.append("⚠️ " + ("ហេតុអ្វីសំខាន់" if km else "WHY IT MATTERS:"))
+            sections.append(_html_escape(context_val))
+        if key_points:
+            sections.append("")
+            sections.append("🔍 " + ("ព័ត៌មានលម្អិត" if km else "DETAILS:"))
+            sections.append(_bullet_list(key_points))
+        timeline = str(_get(data, "timeline", km=km) or "")
+        if timeline:
+            timeline = _dedup_timeline(timeline, data.get("published_date", ""))
+            if timeline:
+                sections.append("")
+                sections.append(f"⏰ {_html_escape(timeline)}")
+
+    elif urgency == "alert":
+        alert_label = "⚠️ ព្រមាន" if km else "⚠️ ALERT"
+        sections.append(f"{alert_label}: <b>{headline}</b>")
+        if category_label or published_date:
+            parts = []
+            if category_label:
+                parts.append(f"📂 {category_label}")
+            if published_date:
+                parts.append(f"📅 {_html_escape(published_date)}")
+            sections.append(" | ".join(parts))
+        sections.append("")
+        sections.append(summary)
+        what_to_do = _get_list(data, "what_to_do", km=km)
+        if what_to_do:
+            sections.append("")
+            sections.append("🛡️ " + ("ជំហានដែលត្រូវធ្វើ" if km else "WHAT TO DO:"))
+            sections.append(_bullet_list(what_to_do))
+        who = _get_list(data, "who_affected", km=km)
+        if who:
+            sections.append("")
+            sections.append("📍 " + ("រងផលប៉ះពាល់" if km else "AFFECTED:"))
+            sections.append(_bullet_list(who))
+        timeline = str(_get(data, "timeline", km=km) or "")
+        if timeline:
+            timeline = _dedup_timeline(timeline, data.get("published_date", ""))
+            if timeline:
+                sections.append("")
+                sections.append(f"⏰ {_html_escape(timeline)}")
+
+    elif urgency == "market":
+        sections.append(f"💹 <b>{headline}</b>")
+        if category_label or published_date:
+            parts = []
+            if category_label:
+                parts.append(f"📂 {category_label}")
+            if published_date:
+                parts.append(f"📅 {_html_escape(published_date)}")
+            sections.append(" | ".join(parts))
+        sections.append("")
+        sections.append(summary)
+        if key_points:
+            sections.append("")
+            sections.append("📊 " + ("ចំណុចសំខាន់ៗ" if km else "KEY POINTS:"))
+            sections.append(_bullet_list(key_points))
+        market_impact = str(_get(data, "market_impact", km=km) or "")
+        if market_impact:
+            sections.append("")
+            sections.append("📈 " + ("ផលប៉ះពាល់ទីផ្សារ" if km else "MARKET IMPACT:"))
+            sections.append(_html_escape(market_impact))
+
+    elif urgency == "explainer":
+        explain_label = "📚 ពន្យល់" if km else "📚 EXPLAINER"
+        sections.append(f"{explain_label}: <b>{headline}</b>")
+        if category_label or published_date:
+            parts = []
+            if category_label:
+                parts.append(f"📂 {category_label}")
+            if published_date:
+                parts.append(f"📅 {_html_escape(published_date)}")
+            sections.append(" | ".join(parts))
+        sections.append("")
+        sections.append(summary)
+        if key_points:
+            sections.append("")
+            sections.append("🔹 " + ("ចំណុចសំខាន់ៗ" if km else "KEY POINTS:"))
+            sections.append(_bullet_list(key_points, limit=8))
+        what_to_watch = _get_list(data, "what_to_watch", km=km)
+        if what_to_watch:
+            sections.append("")
+            sections.append("🔹 " + ("ត្រូវចាប់អារម្មណ៍" if km else "WHAT TO WATCH:"))
+            sections.append(_bullet_list(what_to_watch))
+        tldr = str(_get(data, "tldr", km=km) or "")
+        if tldr:
+            sections.append("")
+            sections.append("💡 TL;DR: " + _html_escape(tldr))
+
+    else:  # analysis (default)
+        sections.append(f"📊 <b>{headline}</b>")
+        if category_label or published_date:
+            parts = []
+            if category_label:
+                parts.append(f"📂 {category_label}")
+            if published_date:
+                parts.append(f"📅 {_html_escape(published_date)}")
+            sections.append(" | ".join(parts))
+        sections.append("")
+        sections.append(summary)
+        if key_points:
+            sections.append("")
+            sections.append("💡 " + ("ចំណុចសំខាន់ៗ" if km else "KEY POINTS:"))
+            sections.append(_bullet_list(key_points))
+        market_impact = str(_get(data, "market_impact", km=km) or "")
+        if market_impact:
+            sections.append("")
+            sections.append("📈 " + ("ផលប៉ះពាល់ទីផ្សារ" if km else "MARKET IMPACT:"))
+            sections.append(_html_escape(market_impact))
+        who = _get_list(data, "who_affected", km=km)
+        if who:
+            sections.append("")
+            sections.append("🎯 " + ("អ្នកដែលរងផលប៉ះពាល់" if km else "WHO THIS AFFECTS:"))
+            sections.append(_bullet_list(who))
+        context_val = str(_get(data, "context", km=km) or "")
+        if context_val:
+            sections.append("")
+            sections.append("💬 " + ("បរិបទ" if km else "CONTEXT:"))
+            sections.append(_html_escape(context_val))
+
+    return "\n".join(sections)
 
 
-def _render_footer(data: dict) -> list[str]:
-    """Render the shared footer (source, tags) for all templates."""
+def _render_footer(data: dict) -> str:
+    """Render the shared footer (source, tags) — same for both languages."""
     sections: list[str] = []
     source_name = data.get("source_name", "")
     if source_name:
-        sections.append("")
         sections.append(f"📌 Source: {_html_escape(source_name)}")
     tags = data.get("tags", [])
     if tags:
         tag_str = " ".join(f"#{_html_escape(t)}" for t in tags[:5])
         sections.append(f"🏷️ {tag_str}")
-    return sections
+    return "\n".join(sections)
 
 
 def render_template(data: dict) -> str:
-    """Render AI-structured data into a Telegram HTML message using the appropriate template."""
+    """Render AI-structured data into a bilingual Telegram HTML message (Khmer first, English second)."""
     urgency = data.get("urgency", "analysis")
-    headline = _html_escape(data.get("headline", "Untitled"))
-    summary = _html_escape(data.get("summary", ""))
-    key_points = data.get("key_points", [])
+    footer = _render_footer(data)
 
-    sections: list[str] = []
+    km_text = _render_one_language(data, km=True, urgency=urgency)
+    en_text = _render_one_language(data, km=False, urgency=urgency)
 
-    if urgency == "breaking":
-        sections.append(f"🚨 CRITICAL: <b>{headline}</b>")
-        sections.extend(_render_header(data))
-        sections.append(summary)
-        metrics = data.get("metrics", [])
-        if metrics:
-            sections.append("")
-            sections.append("📊 KEY METRICS:")
-            sections.append(_bullet_list(metrics))
-        why_matters = data.get("context", "")
-        if why_matters:
-            sections.append("")
-            sections.append("⚠️ WHY IT MATTERS:")
-            sections.append(_html_escape(why_matters))
-        if key_points:
-            sections.append("")
-            sections.append("🔍 DETAILS:")
-            sections.append(_bullet_list(key_points))
-        timeline = _dedup_timeline(data.get("timeline", ""), data.get("published_date", ""))
-        if timeline:
-            sections.append("")
-            sections.append(f"⏰ {_html_escape(timeline)}")
+    text = f"{km_text}\n\n{_SEPARATOR}\n\n{en_text}"
+    if footer:
+        text = f"{text}\n\n{footer}"
 
-    elif urgency == "alert":
-        sections.append(f"⚠️ ALERT: <b>{headline}</b>")
-        sections.extend(_render_header(data))
-        sections.append(summary)
-        what_to_do = data.get("what_to_do", [])
-        if what_to_do:
-            sections.append("")
-            sections.append("🛡️ WHAT TO DO:")
-            sections.append(_bullet_list(what_to_do))
-        who = data.get("who_affected", [])
-        if who:
-            sections.append("")
-            sections.append("📍 AFFECTED:")
-            sections.append(_bullet_list(who))
-        timeline = _dedup_timeline(data.get("timeline", ""), data.get("published_date", ""))
-        if timeline:
-            sections.append("")
-            sections.append(f"⏰ {_html_escape(timeline)}")
-
-    elif urgency == "market":
-        sections.append(f"💹 <b>{headline}</b>")
-        sections.extend(_render_header(data))
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append("📊 KEY POINTS:")
-            sections.append(_bullet_list(key_points))
-        market_impact = data.get("market_impact", "")
-        if market_impact:
-            sections.append("")
-            sections.append("📈 MARKET IMPACT:")
-            sections.append(_html_escape(market_impact))
-
-    elif urgency == "explainer":
-        sections.append(f"📚 EXPLAINER: <b>{headline}</b>")
-        sections.extend(_render_header(data))
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append("🔹 KEY POINTS:")
-            sections.append(_bullet_list(key_points, limit=8))
-        what_to_watch = data.get("what_to_watch", [])
-        if what_to_watch:
-            sections.append("")
-            sections.append("🔹 WHAT TO WATCH:")
-            sections.append(_bullet_list(what_to_watch))
-        tldr = data.get("tldr", "")
-        if tldr:
-            sections.append("")
-            sections.append(f"💡 TL;DR: {_html_escape(tldr)}")
-
-    else:  # analysis (default)
-        sections.append(f"📊 <b>{headline}</b>")
-        sections.extend(_render_header(data))
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append("💡 KEY POINTS:")
-            sections.append(_bullet_list(key_points))
-        market_impact = data.get("market_impact", "")
-        if market_impact:
-            sections.append("")
-            sections.append("📈 MARKET IMPACT:")
-            sections.append(_html_escape(market_impact))
-        who = data.get("who_affected", [])
-        if who:
-            sections.append("")
-            sections.append("🎯 WHO THIS AFFECTS:")
-            sections.append(_bullet_list(who))
-        context = data.get("context", "")
-        if context:
-            sections.append("")
-            sections.append("💬 CONTEXT:")
-            sections.append(_html_escape(context))
-
-    sections.extend(_render_footer(data))
-
-    text = "\n".join(sections).strip()
+    text = "\n".join(line for line in text.split("\n")).strip()
     if len(text) > _MAX_TELEGRAM_LENGTH:
         text = text[: _MAX_TELEGRAM_LENGTH - 1].rsplit("\n", 1)[0] + "\n…"
 
@@ -315,23 +380,34 @@ def _build_prompt(cluster: list[Entry], source_note: str) -> str:
         f"- [{e.source_name}] {e.title}: {e.summary[:200]} (Published: {e.published_date or 'unknown date'})"
         for e in cluster[:5]
     )
-    return f"""You are a tech news bot analyzing stories for a Telegram channel.
+    return f"""You are a tech news bot analyzing stories for a bilingual Telegram channel (Khmer + English).
 
-Given the following stories about the same event, return a JSON object with these fields:
+Given the following stories about the same event, return a JSON object with these fields.
+ALL English fields must have a matching _km field with a natural Khmer translation (not robotic/machine-translated — write like a Cambodian tech journalist would).
 
 {{
   "urgency": "breaking|alert|analysis|market|explainer",
   "category": "startups|ai|cybersecurity|defi|big_tech|hardware|science|regulation",
-  "headline": "short punchy headline",
-  "summary": "1-2 sentence summary of what happened",
+  "headline": "short punchy headline in English",
+  "headline_km": "short punchy headline in Khmer",
+  "summary": "1-2 sentence summary in English",
+  "summary_km": "1-2 sentence summary in Khmer",
   "key_points": ["point 1", "point 2", "point 3"],
+  "key_points_km": ["ចំណុច ១", "ចំណុច ២", "ចំណុច ៣"],
   "metrics": ["metric 1 if available"],
-  "timeline": "status timeline or resolution updates only — do NOT repeat the publication date, it is shown separately",
-  "market_impact": "how it affects prices or market if relevant",
-  "who_affected": ["protocol/user type affected"],
+  "metrics_km": ["សូម្បីតែមាន"],
   "what_to_do": ["actionable steps if alert/breaking"],
-  "context": "why this matters, background or precedent",
-  "tldr": "one sentence summary",
+  "what_to_do_km": ["ជំហានដែលត្រូវធ្វើ"],
+  "who_affected": ["protocol/user type affected"],
+  "who_affected_km": ["ប្រភេទអ្នកដែលរងផលប៉ះពាល់"],
+  "context": "why this matters, background or precedent in English",
+  "context_km": "why this matters in Khmer",
+  "timeline": "status timeline or resolution updates only — do NOT repeat the publication date",
+  "timeline_km": "status timeline in Khmer",
+  "market_impact": "how it affects prices or market if relevant",
+  "market_impact_km": "market impact in Khmer",
+  "tldr": "one sentence summary in English",
+  "tldr_km": "one sentence summary in Khmer",
   "tags": ["Topic1", "Topic2", "Topic3"],
   "published_date": "the publication date from the sources, e.g. 'Jul 16, 2026'"
 }}
@@ -357,6 +433,7 @@ Rules:
 - Report facts only — no opinions, no speculation, no buy/sell advice
 - Never closely mirror any single article's wording
 - If sources disagree, note it in context
+- Khmer translations must sound natural — use proper Khmer tech vocabulary, not word-for-word translation
 - Return ONLY valid JSON, no preamble, no markdown code fences
 {source_note}
 
@@ -421,8 +498,11 @@ def _process_ai_output(
                 "urgency": "alert",
                 "category": "startups",
                 "headline": cluster[0].title or "Untitled Story",
+                "headline_km": cluster[0].title or "Untitled Story",
                 "summary": (cluster[0].summary or "No summary available.")[:200],
+                "summary_km": (cluster[0].summary or "No summary available.")[:200],
                 "key_points": [],
+                "key_points_km": [],
                 "tags": [],
             }
     return data
@@ -477,8 +557,11 @@ def _fallback_data(cluster: list[Entry], urgent: bool) -> dict:
         "urgency": urgency,
         "category": "startups",
         "headline": title,
+        "headline_km": title,
         "summary": summary,
+        "summary_km": summary,
         "key_points": [f"Reported by: {', '.join(source_names[:3])}"],
+        "key_points_km": [f"រាយការណ៍ដោយ: {', '.join(source_names[:3])}"],
         "tags": ["News"],
         "published_date": primary.published_date or "",
     }
