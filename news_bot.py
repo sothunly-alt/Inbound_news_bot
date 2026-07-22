@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import os
 import threading
 import time as time_mod
 
@@ -37,6 +38,8 @@ from newsbot import config
 from newsbot.config import (
     DIGEST_SCHEDULE_HOUR_AM,
     DIGEST_SCHEDULE_HOUR_PM,
+    DONATION_QR_IMAGE,
+    DONATION_SCHEDULE_HOUR,
     FETCH_COOLDOWN_SECONDS,
     TELEGRAM_CHANNEL_ID,
     TELEGRAM_THREAD_ID,
@@ -70,6 +73,92 @@ async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Hourly urgent check — keyword matches not already posted."""
     await fetch_urgent_and_post(context)
+
+
+DONATION_TEXT = (
+    "🧩 <b>Help Us Connect the Dots</b>\n\n"
+    "To give you the full picture, Inbound Reports doesn't just rely on one perspective. "
+    "Our platform aggregates tech news from multiple sources and APIs across the web, "
+    "putting every angle in one place.\n\n"
+    "By comparing sources, we help Cambodian readers:\n\n"
+    "🌐 Step outside the noise and avoid echo chambers.\n"
+    "⚖️ Access balanced perspectives from across the tech landscape.\n"
+    "📖 See the complete story to build better digital literacy.\n\n"
+    "Running this aggregation engine—and paying for data access—takes resources. "
+    "If you value having a balanced, multi-source feed, please consider supporting our work!\n\n"
+    "👇 Tap the ABA link below to make a quick contribution:\n\n"
+    "🔗 <a href=\"https://pay.ababank.com/oRF8/puropy03\">ABA Payment Link</a>"
+)
+
+
+async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send donation message with QR image to channel and text to group chat at 10 PM."""
+    # --- channel target ---
+    channel_id = config.TELEGRAM_CHANNEL_ID
+    thread_id = config.TELEGRAM_THREAD_ID
+    if channel_id is None:
+        raw_channel = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
+        if raw_channel:
+            try:
+                channel_id = int(raw_channel)
+            except (ValueError, TypeError):
+                pass
+        raw_thread = os.environ.get("TELEGRAM_THREAD_ID", "").strip()
+        if raw_thread:
+            try:
+                thread_id = int(raw_thread)
+            except (ValueError, TypeError):
+                pass
+
+    # --- group chat target ---
+    group_chat_id = config.TELEGRAM_GROUP_CHAT_ID
+    if group_chat_id is None:
+        raw_group = os.environ.get("TELEGRAM_GROUP_CHAT_ID", "").strip()
+        if raw_group:
+            try:
+                group_chat_id = int(raw_group)
+            except (ValueError, TypeError):
+                pass
+
+    qr_path = DONATION_QR_IMAGE
+
+    # Send to channel with QR image
+    if channel_id is not None:
+        try:
+            if os.path.isfile(qr_path):
+                with open(qr_path, "rb") as f:
+                    await context.bot.send_photo(
+                        chat_id=channel_id,
+                        photo=f,
+                        caption=DONATION_TEXT,
+                        parse_mode="HTML",
+                    )
+            else:
+                await context.bot.send_message(
+                    chat_id=channel_id,
+                    text=DONATION_TEXT,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            if thread_id is not None:
+                logger.info("Donation message sent to channel %s thread %s", channel_id, thread_id)
+            else:
+                logger.info("Donation message sent to channel %s", channel_id)
+        except Exception:
+            logger.exception("Failed to send donation message to channel %s", channel_id)
+
+    # Send text-only donation message to group chat
+    if group_chat_id is not None and group_chat_id != channel_id:
+        try:
+            await context.bot.send_message(
+                chat_id=group_chat_id,
+                text=DONATION_TEXT,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            logger.info("Donation message sent to group chat %s", group_chat_id)
+        except Exception:
+            logger.exception("Failed to send donation message to group chat %s", group_chat_id)
 
 
 async def _reply(update: object, text: str) -> None:
@@ -189,12 +278,17 @@ def main() -> None:
         interval=URGENT_CHECK_INTERVAL_SECONDS,
         first=URGENT_FIRST_DELAY_SECONDS,
     )
+    app.job_queue.run_daily(
+        donation_job,
+        time=dt.time(hour=DONATION_SCHEDULE_HOUR, minute=0, tzinfo=TIMEZONE),
+    )
 
     logger.info(
-        "Bot running. Digest at %02d:00 and %02d:00 (%s). Urgent checks every %ds. Use /fetch for on-demand.",
+        "Bot running. Digest at %02d:00 and %02d:00 (%s). Donation at %02d:00. Urgent checks every %ds. Use /fetch for on-demand.",
         DIGEST_SCHEDULE_HOUR_AM,
         DIGEST_SCHEDULE_HOUR_PM,
         TIMEZONE,
+        DONATION_SCHEDULE_HOUR,
         URGENT_CHECK_INTERVAL_SECONDS,
     )
 

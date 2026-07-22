@@ -29,6 +29,8 @@ __all__ = [
     "DIGEST_MAX_STORIES",
     "DIGEST_SCHEDULE_HOUR_AM",
     "DIGEST_SCHEDULE_HOUR_PM",
+    "DONATION_SCHEDULE_HOUR",
+    "DONATION_QR_IMAGE",
     "URGENT_CHECK_INTERVAL_SECONDS",
     "URGENT_FIRST_DELAY_SECONDS",
     "MAX_URGENT_POSTS_PER_RUN",
@@ -44,6 +46,7 @@ __all__ = [
     "PORT",
     "TELEGRAM_CHANNEL_ID",
     "TELEGRAM_THREAD_ID",
+    "TELEGRAM_GROUP_CHAT_ID",
 ]
 
 # ---- Redis (optional — enables persistent state on Railway/Render) ----
@@ -105,6 +108,8 @@ DIGEST_MIN_SOURCES: int = 2
 DIGEST_MAX_STORIES: int = 5
 DIGEST_SCHEDULE_HOUR_AM: int = 5
 DIGEST_SCHEDULE_HOUR_PM: int = 17
+DONATION_SCHEDULE_HOUR: int = 22  # 10 PM
+DONATION_QR_IMAGE: str = os.environ.get("DONATION_QR_IMAGE", "qr_aba_news.jpg")
 URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 60  # once per hour
 URGENT_FIRST_DELAY_SECONDS: int = 60
 POLL_INTERVAL_SECONDS: int = int(os.environ.get("POLL_INTERVAL_SECONDS", "7200"))
@@ -145,6 +150,7 @@ TELEGRAM_BOT_TOKEN: str = ""
 PORT: int = 10000
 TELEGRAM_CHANNEL_ID: int | None = None
 TELEGRAM_THREAD_ID: int | None = None
+TELEGRAM_GROUP_CHAT_ID: int | None = None
 
 
 def validate_config() -> None:
@@ -152,7 +158,7 @@ def validate_config() -> None:
 
     Call once from main() — not at import time.
     """
-    global TELEGRAM_BOT_TOKEN, PORT, TELEGRAM_CHANNEL_ID, TELEGRAM_THREAD_ID
+    global TELEGRAM_BOT_TOKEN, PORT, TELEGRAM_CHANNEL_ID, TELEGRAM_THREAD_ID, TELEGRAM_GROUP_CHAT_ID
 
     required_vars = ["TELEGRAM_BOT_TOKEN", "GROQ_API_KEY"]
     missing = [v for v in required_vars if not os.environ.get(v)]
@@ -175,6 +181,13 @@ def validate_config() -> None:
             TELEGRAM_THREAD_ID = int(thread_raw)
         except (ValueError, TypeError):
             raise SystemExit(f"Invalid TELEGRAM_THREAD_ID: {thread_raw!r} — must be an integer.")
+
+    group_raw = os.environ.get("TELEGRAM_GROUP_CHAT_ID", "").strip()
+    if group_raw:
+        try:
+            TELEGRAM_GROUP_CHAT_ID = int(group_raw)
+        except (ValueError, TypeError):
+            raise SystemExit(f"Invalid TELEGRAM_GROUP_CHAT_ID: {group_raw!r} — must be an integer.")
 
 
 def create_groq_client():
