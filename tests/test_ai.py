@@ -246,6 +246,30 @@ class TestRenderTemplate:
         assert len(result) <= 4096
         assert result.endswith("…")
 
+    def test_timeline_not_deduped_when_real_status(self):
+        data = {
+            "urgency": "alert",
+            "category": "cybersecurity",
+            "headline": "Vulnerability Disclosed",
+            "summary": "Medium-severity bug.",
+            "timeline": "Patch in 7-10 days",
+            "published_date": "Jul 14, 2026",
+        }
+        result = render_template(data)
+        assert "⏰ Patch in 7-10 days" in result
+
+    def test_timeline_deduped_when_it_echoes_published_date(self):
+        data = {
+            "urgency": "alert",
+            "category": "ai",
+            "headline": "AI Article Published",
+            "summary": "A new article on AI.",
+            "timeline": "Published on Jul 19, 2026",
+            "published_date": "Jul 19, 2026",
+        }
+        result = render_template(data)
+        assert "⏰" not in result
+
 
 # --- Fallback Data ---
 
