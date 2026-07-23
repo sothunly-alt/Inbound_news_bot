@@ -398,7 +398,8 @@ class TestHeaderParameter:
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = (
             '{"urgency": "analysis", "category": "ai", "headline": "Test Story", '
-            '"summary": "A summary", "key_points": ["point"], "tags": ["Tag"]}'
+            '"headline_km": "រឿងសាកល្បង", "summary": "A summary", '
+            '"summary_km": "សង្ខេប", "key_points": ["point"], "key_points_km": ["ចំណុច"], "tags": ["Tag"]}'
         )
         return mock_response
 
@@ -441,14 +442,14 @@ class TestRewriteWithAi:
 
     def test_urgent_overrides_non_urgent_level(self):
         cluster = [Entry(id="1", title="Urgent Override", summary="Exploit detected", link="http://a.com", source_name="A")]
-        data = '{"urgency": "explainer", "category": "ai", "headline": "Test", "summary": "Sum", "key_points": [], "tags": []}'
+        data = '{"urgency": "explainer", "category": "ai", "headline": "Test", "headline_km": "សាកល្បង", "summary": "Sum", "summary_km": "សង្ខេប", "key_points": [], "key_points_km": [], "tags": []}'
         with patch("newsbot.ai._call_groq_with_retry", return_value=data):
             result = rewrite_with_ai(cluster, urgent=True)
         assert "⚠️ ALERT:" in result
 
     def test_publish_date_injected(self):
         cluster = [Entry(id="1", title="Date Test", summary="Summary", link="http://a.com", source_name="A", published_date="Jul 16, 2026")]
-        data = '{"urgency": "analysis", "category": "ai", "headline": "Date Test", "summary": "Summary", "key_points": [], "tags": []}'
+        data = '{"urgency": "analysis", "category": "ai", "headline": "Date Test", "headline_km": "កាលបរិច្ឆេទ", "summary": "Summary", "summary_km": "សង្ខេប", "key_points": [], "key_points_km": [], "tags": []}'
         with patch("newsbot.ai._call_groq_with_retry", return_value=data):
             result = rewrite_with_ai(cluster)
         assert "📅 Jul 16, 2026" in result

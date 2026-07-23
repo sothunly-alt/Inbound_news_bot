@@ -38,6 +38,7 @@ _RETRY_BASE_DELAY: float = 1.0
 _REQUIRED_JSON_KEYS = ("urgency", "headline", "summary", "category")
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_KHMER_RE = re.compile(r"[\u1780-\u17FF]")
 
 
 def _strip_html(text: str) -> str:
@@ -122,6 +123,51 @@ def _sanitize_ai_data(data: dict) -> dict:
         if key in data and isinstance(data[key], list):
             data[key] = [_strip_html(item) for item in data[key] if isinstance(item, str)]
     return data
+
+
+def _has_khmer(text: str) -> bool:
+    """Check if a string contains Khmer script characters."""
+    return bool(_KHMER_RE.search(text))
+
+
+def _validate_khmer_fields(data: dict) -> tuple[bool, list[str]]:
+    """Validate that _km fields contain actual Khmer text, not just English fallback."""
+    missing: list[str] = []
+    string_keys = [
+        ("headline", "headline_km"),
+        ("summary", "summary_km"),
+        ("context", "context_km"),
+        ("timeline", "timeline_km"),
+        ("market_impact", "market_impact_km"),
+        ("tldr", "tldr_km"),
+    ]
+    list_keys = [
+        ("key_points", "key_points_km"),
+        ("metrics", "metrics_km"),
+        ("what_to_do", "what_to_do_km"),
+        ("who_affected", "who_affected_km"),
+    ]
+    for eng_key, km_key in string_keys:
+        km_val = data.get(km_key, "")
+        eng_val = data.get(eng_key, "")
+        if km_val and not _has_khmer(str(km_val)):
+            missing.append(km_key)
+            logger.warning("Khmer field '%s' has no Khmer characters: %.50s", km_key, km_val)
+        elif not km_val and eng_val:
+            missing.append(km_key)
+            logger.warning("Khmer field '%s' is missing (empty)", km_key)
+    for eng_key, km_key in list_keys:
+        km_val = data.get(km_key, [])
+        eng_val = data.get(eng_key, [])
+        if km_val:
+            has_khmer_in_list = any(_has_khmer(str(item)) for item in km_val if isinstance(item, str))
+            if not has_khmer_in_list:
+                missing.append(km_key)
+                logger.warning("Khmer field '%s' list has no Khmer characters: %s", km_key, km_val)
+        elif eng_val:
+            missing.append(km_key)
+            logger.warning("Khmer field '%s' list is missing (empty)", km_key)
+    return len(missing) == 0, missing
 
 
 def _md_bold_to_html(text: str) -> str:
@@ -418,13 +464,20 @@ def _build_prompt(cluster: list[Entry], source_note: str) -> str:
 Given the following stories about the same event, return a JSON object with these fields.
 ALL English fields must have a matching _km field with a natural Khmer translation (not robotic/machine-translated — write like a Cambodian tech journalist would).
 
+CRITICAL: The _km fields MUST contain Khmer script (អក្សរខ្មែរ), NOT English text. Every _km field must use Khmer characters.
+
+Example of correct Khmer output:
+- headline_km: "ក្រុមហ៊ុន OpenAI ប្រកាសផលិតផល AI ថ្មីសម្រាប់អាជីវកម្ម"
+- summary_km: "ក្រុមហ៊ុន OpenAI បានប្រកាសឧបករណ៍ AI ថ្មីដែលជួយសហគ្រិនក្នុងការបង្កើនប្រសិទ្ធផលិតភាព។ ឧបករណ៍នេះនឹងដាក់លក់នៅខែក្រោយ។"
+- key_points_km: ["OpenAI ប្រកាសផលិតផល AI ថ្មី", "ឧបករណ៍នេះសម្រាប់អាជីវកម្ម", "នឹងដាក់លក់នៅខែក្រោយ"]
+
 {{
   "urgency": "breaking|alert|analysis|market|explainer",
   "category": "startups|ai|cybersecurity|defi|big_tech|hardware|science|regulation",
   "headline": "short punchy headline in English",
-  "headline_km": "short punchy headline in Khmer",
+  "headline_km": "ចំណងជើងខ្លីជាភាសាខ្មែរ",
   "summary": "1-2 sentence summary in English",
-  "summary_km": "1-2 sentence summary in Khmer",
+  "summary_km": "សង្ខេប ១-២ ឃ្លាជាភាសាខ្មែរ",
   "key_points": ["point 1", "point 2", "point 3"],
   "key_points_km": ["ចំណុច ១", "ចំណុច ២", "ចំណុច ៣"],
   "metrics": ["metric 1 if available"],
@@ -434,13 +487,13 @@ ALL English fields must have a matching _km field with a natural Khmer translati
   "who_affected": ["protocol/user type affected"],
   "who_affected_km": ["ប្រភេទអ្នកដែលរងផលប៉ះពាល់"],
   "context": "why this matters, background or precedent in English",
-  "context_km": "why this matters in Khmer",
+  "context_km": "ហេតុអ្វីនេះសំខាន់ជាភាសាខ្មែរ",
   "timeline": "status timeline or resolution updates only — do NOT repeat the publication date",
-  "timeline_km": "status timeline in Khmer",
+  "timeline_km": "ស្ថានភាពពេលវេលាជាភាសាខ្មែរ",
   "market_impact": "how it affects prices or market if relevant",
-  "market_impact_km": "market impact in Khmer",
+  "market_impact_km": "ផលប៉ះពាល់ទីផ្សារជាភាសាខ្មែរ",
   "tldr": "one sentence summary in English",
-  "tldr_km": "one sentence summary in Khmer",
+  "tldr_km": "សង្ខេបមួយឃ្លាជាភាសាខ្មែរ",
   "tags": ["Topic1", "Topic2", "Topic3"],
   "published_date": "the publication date from the sources, e.g. 'Jul 16, 2026'"
 }}
@@ -474,6 +527,31 @@ Rules:
 
 Stories covering the same event:
 {headlines}"""
+
+
+def _build_km_retry_prompt(cluster: list[Entry], source_note: str, missing_km: list[str]) -> str:
+    """Build a retry prompt focused on generating missing Khmer fields."""
+    headlines = "\n".join(
+        f"- [{e.source_name}] {e.title}: {_strip_html(e.summary)[:200]}"
+        for e in cluster[:5]
+    )
+    km_fields = ", ".join(f'"{k}"' for k in missing_km)
+    return f"""You are a Cambodian tech journalist writing for a bilingual Telegram channel.
+
+Generate ONLY the following Khmer fields for a news story:
+{km_fields}
+
+Write natural, fluent Khmer — like a real Cambodian tech journalist, not machine-translated.
+
+Example of good Khmer tech writing:
+- "ក្រុមហ៊ុន Apple បានប្រកាសផលិតផលថ្មី" (Apple announced a new product)
+- "ការវាយប្រហារ סיបर​មានការកើនឡើង" (Cyberattacks are increasing)
+- "តម្លៃ Bitcoin បានកើនឡើង ៥% ក្នុងរយៈពេល ២៤ ម៉ោង" (Bitcoin price rose 5% in 24 hours)
+
+Return ONLY valid JSON with the requested fields, no preamble.
+
+Stories:
+{headlines}{source_note}"""
 
 
 def _call_groq_with_retry(prompt: str) -> str | None:
@@ -511,8 +589,12 @@ def _process_ai_output(
     raw_output: str | None,
     cluster: list[Entry],
     urgent: bool,
-) -> dict:
-    """Parse and validate AI output, falling back gracefully on failure."""
+) -> tuple[dict, list[str]]:
+    """Parse and validate AI output, falling back gracefully on failure.
+    
+    Returns:
+        Tuple of (data dict, list of missing Khmer fields)
+    """
     if raw_output is None:
         data = _fallback_data(cluster, urgent)
     else:
@@ -542,7 +624,9 @@ def _process_ai_output(
                 "key_points_km": [],
                 "tags": [],
             }
-    return data
+    
+    khmer_ok, missing_km = _validate_khmer_fields(data)
+    return data, missing_km if not khmer_ok else []
 
 
 def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | None = None) -> str:
@@ -561,7 +645,30 @@ def rewrite_with_ai(cluster: list[Entry], urgent: bool = False, header: str | No
 
     prompt = _build_prompt(cluster, source_note)
     raw_output = _call_groq_with_retry(prompt)
-    data = _process_ai_output(raw_output, cluster, urgent)
+    data, missing_km = _process_ai_output(raw_output, cluster, urgent)
+
+    # Retry once with Khmer-focused prompt if Khmer fields are missing
+    if missing_km:
+        logger.warning(
+            "Khmer fields missing after first attempt: %s — retrying with Khmer-focused prompt",
+            missing_km,
+        )
+        km_prompt = _build_km_retry_prompt(cluster, source_note, missing_km)
+        km_raw = _call_groq_with_retry(km_prompt)
+        if km_raw is not None:
+            try:
+                km_data = _parse_ai_json(km_raw)
+                km_data = _sanitize_ai_data(km_data)
+                km_ok, _ = _validate_khmer_fields(km_data)
+                if km_ok:
+                    logger.info("Khmer retry succeeded — merging Khmer fields into data")
+                    for key in missing_km:
+                        if key in km_data:
+                            data[key] = km_data[key]
+                else:
+                    logger.warning("Khmer retry still missing fields — using best effort")
+            except ValueError:
+                logger.warning("Khmer retry failed to parse as JSON — using best effort")
 
     data["source_name"] = source_name_str
 
