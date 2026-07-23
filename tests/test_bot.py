@@ -10,6 +10,7 @@ from newsbot.bot import (
     _prepare_entries,
     broadcast_stories,
 )
+from newsbot.config import DIGEST_MAX_STORIES
 from newsbot.feeds import Entry
 
 
@@ -72,9 +73,10 @@ class TestPrepareEntries:
     def test_returns_separate_stories(self, mock_state, mock_collect, mock_cluster):
         mock_state.return_value.load_posted_ids.return_value = set()
         mock_state.return_value.load_posted_titles.return_value = set()
-        mock_collect.return_value = [_entry(str(i), link=f"http://x.com/{i}") for i in range(12)]
+        entry_count = DIGEST_MAX_STORIES + 2  # more entries than the digest cap
+        mock_collect.return_value = [_entry(str(i), link=f"http://x.com/{i}") for i in range(entry_count)]
         mock_cluster.return_value = [
-            [_entry(str(i), title=f"T{i}", link=f"http://x.com/{i}")] for i in range(12)
+            [_entry(str(i), title=f"T{i}", link=f"http://x.com/{i}")] for i in range(entry_count)
         ]
 
         def fake_rewrite(cluster, urgent=False, header=None):
@@ -82,10 +84,10 @@ class TestPrepareEntries:
 
         with patch("newsbot.bot.rewrite_with_ai", side_effect=fake_rewrite) as mock_ai:
             stories = _prepare_entries(urgent=False)
-        assert len(stories) == 10
+        assert len(stories) == DIGEST_MAX_STORIES
         assert all(isinstance(s, StoryPost) for s in stories)
         assert "<b>T0</b>" in stories[0].text
-        assert mock_ai.call_count == 10
+        assert mock_ai.call_count == DIGEST_MAX_STORIES
 
 
 class TestPrepareUrgent:
