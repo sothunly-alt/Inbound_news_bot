@@ -108,6 +108,17 @@ RSS_FEEDS: list[str] = [
     "https://electrek.co/feed/",
     # Space
     "https://spacenews.com/feed/",
+    # Community & Discovery
+    "https://hnrss.org/frontpage",
+    "https://www.producthunt.com/feed",
+    # AI Research
+    "https://www.anthropic.com/blog/rss",
+    "https://blog.research.google/rss",
+    # Security
+    "https://therecord.media/feed",
+    # Developer
+    "https://feed.infoq.com/",
+    "https://dev.to/feed",
 ]
 MAX_ITEMS_PER_FEED: int = 3
 MAX_ENTRY_AGE_HOURS: int = 24
