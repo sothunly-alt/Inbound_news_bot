@@ -75,53 +75,18 @@ async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     await fetch_urgent_and_post(context)
 
 
-DONATION_TEXT_KM = (
-    "🧩 <b>ចូលរួមជាមួយយើង ដើម្បីស្វែងយល់ពីរឿងរ៉ាវគ្រប់ជ្រុងជ្រោយ</b>\n\n"
-
-    "Inbound Reports មិនពឹងផ្អែកលើទស្សនៈតែមួយឡើយ។\n"
-    "វេទិការបស់យើងប្រមូលព័ត៌មានបច្ចេកវិទ្យា\n"
-    "ពីប្រភពចម្រុះ និង APIs ពីបណ្តាញអ៊ីនធឺណិត\n"
-    "ដើម្បីដាក់គ្រប់មុខមាត់ទាំងអស់នៅកន្លែងតែមួយ។\n\n"
-
-    "⚖️ <b>អត្ថប្រយោជន៍៖</b>\n\n"
-
-    "🌐 ចៀសផុតពីភាពរញ៉េរញ៉ៃ\n"
-    "   និងមិនជាប់ក្នុងបន្ទប់ព័ត៌មានតែមួយ\n\n"
-
-    "⚖️ ទទួលបានទស្សនៈតុល្យភាព\n"
-    "   ជុំវិញវិស័យបច្ចេកវិទ្យា\n\n"
-
-    "📖 ស្វែងយល់សាច់រឿងពេញលេញ\n"
-    "   ដើម្បីអក្ខរកម្មឌីជីថល\n\n"
-
-    "💰 <b>ការដំណើរការប្រព័ន្ធនេះត្រូវការធនធាន។</b>\n"
-    "ប្រសិនបើលោកអ្នកឱ្យតម្លៃវេទិកាព័ត៌មាន\n"
-    "ដែលផ្តល់តុល្យភាព និងប្រភពចម្រុះ\n"
-    "សូមចូលរួមគាំទ្រការងាររបស់យើង!\n\n"
-
-    "👇 <b>វិភាគទានតាម ABA៖</b>\n\n"
-    '🔗 <a href="https://pay.ababank.com/oRF8/puropy03">ចុចទីនេះដើម្បីបរិច្ចាក</a>'
-)
-
 DONATION_TEXT = (
-    "🧩 <b>Help Us Connect the Dots</b>\n\n"
-    "To give you the full picture, Inbound Reports doesn't just rely on one perspective. "
-    "Our platform aggregates tech news from multiple sources and APIs across the web, "
-    "putting every angle in one place.\n\n"
-    "By comparing sources, we help Cambodian readers:\n\n"
-    "🌐 Step outside the noise and avoid echo chambers.\n"
-    "⚖️ Access balanced perspectives from across the tech landscape.\n"
-    "📖 See the complete story to build better digital literacy.\n\n"
-    "Running this aggregation engine—and paying for data access—takes resources. "
-    "If you value having a balanced, multi-source feed, please consider supporting our work!\n\n"
-    "👇 Tap the ABA link below to make a quick contribution:\n\n"
-    '🔗 <a href="https://pay.ababank.com/oRF8/puropy03">ABA Payment Link</a>'
+    "<b>Support Inbound Reports</b>\n\n"
+    "We aggregate tech news from multiple sources and APIs across the web "
+    "to deliver concise, multi-perspective coverage.\n\n"
+    "Running this engine takes resources. "
+    "If you find value in having a balanced tech feed, consider supporting our work:\n\n"
+    '<a href="https://pay.ababank.com/oRF8/puropy03">ABA Payment Link</a>'
 )
 
 
 async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send donation message with QR image to channel and text to group chat at 10 PM."""
-    # --- channel target ---
     channel_id = config.TELEGRAM_CHANNEL_ID
     thread_id = config.TELEGRAM_THREAD_ID
     if channel_id is None:
@@ -138,7 +103,6 @@ async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except (ValueError, TypeError):
                 pass
 
-    # --- group chat target ---
     group_chat_id = config.TELEGRAM_GROUP_CHAT_ID
     if group_chat_id is None:
         raw_group = os.environ.get("TELEGRAM_GROUP_CHAT_ID", "").strip()
@@ -150,7 +114,6 @@ async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     qr_path = DONATION_QR_IMAGE
 
-    # Send to channel: Khmer first (with QR image), then English
     if channel_id is not None:
         try:
             if os.path.isfile(qr_path):
@@ -158,38 +121,22 @@ async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     await context.bot.send_photo(
                         chat_id=channel_id,
                         photo=f,
-                        caption=DONATION_TEXT_KM,
+                        caption=DONATION_TEXT,
                         parse_mode="HTML",
                     )
             else:
                 await context.bot.send_message(
                     chat_id=channel_id,
-                    text=DONATION_TEXT_KM,
+                    text=DONATION_TEXT,
                     parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
-            await context.bot.send_message(
-                chat_id=channel_id,
-                text=DONATION_TEXT,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-            if thread_id is not None:
-                logger.info("Donation message sent to channel %s thread %s", channel_id, thread_id)
-            else:
-                logger.info("Donation message sent to channel %s", channel_id)
+            logger.info("Donation message sent to channel %s", channel_id)
         except Exception:
             logger.exception("Failed to send donation message to channel %s", channel_id)
 
-    # Send text-only donation messages to group chat (Khmer then English)
     if group_chat_id is not None and group_chat_id != channel_id:
         try:
-            await context.bot.send_message(
-                chat_id=group_chat_id,
-                text=DONATION_TEXT_KM,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
             await context.bot.send_message(
                 chat_id=group_chat_id,
                 text=DONATION_TEXT,

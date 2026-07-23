@@ -43,20 +43,22 @@ class StoryPost:
 
     text: str
     primary_url: str
+    primary_source: str
     extra_urls: list[str] = field(default_factory=list)
+    extra_sources: list[str] = field(default_factory=list)
     image_url: str | None = None
     entry_ids: set[str] = field(default_factory=set)
     entry_titles: set[str] = field(default_factory=set)
 
 
 def _source_keyboard(post: StoryPost) -> InlineKeyboardMarkup:
-    """Inline URL buttons: primary Read more + up to 2 more sources."""
+    """Inline URL buttons: primary source + up to 2 more sources."""
     rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton("Read more", url=post.primary_url)]
+        [InlineKeyboardButton(post.primary_source, url=post.primary_url)]
     ]
     extras: list[InlineKeyboardButton] = []
-    for i, url in enumerate(post.extra_urls[:2], start=2):
-        extras.append(InlineKeyboardButton(f"Source {i}", url=url))
+    for name, url in zip(post.extra_sources[:2], post.extra_urls[:2]):
+        extras.append(InlineKeyboardButton(name, url=url))
     if extras:
         rows.append(extras)
     return InlineKeyboardMarkup(rows)
@@ -211,10 +213,17 @@ def _cluster_to_story(
     if not links:
         return None
 
+    primary_url, primary_source = links[0]
+    extra = links[1:]
+    extra_urls = [u for u, _ in extra]
+    extra_sources = [s for _, s in extra]
+
     return StoryPost(
         text=text,
-        primary_url=links[0],
-        extra_urls=links[1:],
+        primary_url=primary_url,
+        primary_source=primary_source,
+        extra_urls=extra_urls,
+        extra_sources=extra_sources,
         image_url=pick_image_url(cluster),
         entry_ids={e.id for e in cluster},
         entry_titles={e.title for e in cluster},

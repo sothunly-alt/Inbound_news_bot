@@ -77,11 +77,39 @@ RSS_FEEDS: list[str] = [
     "https://www.wired.com/feed/rss",
     "https://www.theguardian.com/technology/rss",
     "https://www.technologyreview.com/feed/",
-    # Curated Medium publications (editor-run, not open tag streams)
+    # Curated Medium publications
     "https://medium.com/feed/better-programming",
     "https://medium.com/feed/towards-data-science",
+    # SE Asia & Regional Tech
+    "https://www.techinasia.com/feed",
+    "https://kr-asia.com/feed",
+    "https://e27.co/feed/",
+    "https://restofworld.org/feed/",
+    "https://asia.nikkei.com/rss/feed/technology",
+    # AI & Research
+    "https://blog.openai.com/rss/",
+    "https://deepmind.google/blog/rss.xml",
+    "https://huggingface.co/blog/feed.xml",
+    "https://news.mit.edu/rss/topic/artificial-intelligence2",
+    "https://www.marktechpost.com/feed/",
+    # Mainstream Tech
+    "https://feeds.venturebeat.com/Venturebeat",
+    "https://www.engadget.com/rss.xml",
+    "https://spectrum.ieee.org/feeds/feed.rss",
+    "https://www.vox.com/rss/recode/index.xml",
+    # Cloud & DevOps
+    "https://thenewstack.io/feed/",
+    # Developer & Open Source
+    "https://github.blog/feed/",
+    "https://stackoverflow.blog/feed/",
+    # Gaming
+    "https://www.polygon.com/rss/index.xml",
+    # Climate Tech
+    "https://electrek.co/feed/",
+    # Space
+    "https://spacenews.com/feed/",
 ]
-MAX_ITEMS_PER_FEED: int = 5
+MAX_ITEMS_PER_FEED: int = 3
 MAX_ENTRY_AGE_HOURS: int = 24
 FEED_TIMEOUT_SECONDS: int = 15
 FEED_GLOBAL_TIMEOUT_EXTRA: int = 10
@@ -101,7 +129,7 @@ GROQ_MAX_TOKENS: int = 2200
 # ---- Scheduling ----
 TIMEZONE = ZoneInfo("Asia/Phnom_Penh")
 DIGEST_MIN_SOURCES: int = 2
-DIGEST_MAX_STORIES: int = 5
+DIGEST_MAX_STORIES: int = 10
 DIGEST_SCHEDULE_HOUR_AM: int = 5
 DIGEST_SCHEDULE_HOUR_PM: int = 17
 DONATION_SCHEDULE_HOUR: int = 22  # 10 PM
@@ -134,6 +162,8 @@ URGENCY_LEVELS_SET: frozenset[str] = frozenset(URGENCY_LEVELS)
 NEWS_CATEGORIES: tuple[str, ...] = (
     "startups", "ai", "cybersecurity", "defi",
     "big_tech", "hardware", "science", "regulation",
+    "cloud", "opensource", "gaming", "climate",
+    "telecom", "mobile", "regional",
 )
 NEWS_CATEGORIES_SET: frozenset[str] = frozenset(NEWS_CATEGORIES)
 
