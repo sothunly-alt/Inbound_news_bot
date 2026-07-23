@@ -86,66 +86,42 @@ DONATION_TEXT = (
 
 
 async def donation_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send donation message with QR image to channel and text to group chat at 10 PM."""
-    channel_id = config.TELEGRAM_CHANNEL_ID
+    """Send donation message to the group chat topic at 10 PM."""
+    chat_id = config.TELEGRAM_CHANNEL_ID
     thread_id = config.TELEGRAM_THREAD_ID
-    if channel_id is None:
-        raw_channel = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
-        if raw_channel:
+    if chat_id is None:
+        raw = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
+        if raw:
             try:
-                channel_id = int(raw_channel)
+                chat_id = int(raw)
             except (ValueError, TypeError):
                 pass
-        raw_thread = os.environ.get("TELEGRAM_THREAD_ID", "").strip()
-        if raw_thread:
+    if thread_id is None:
+        raw = os.environ.get("TELEGRAM_THREAD_ID", "").strip()
+        if raw:
             try:
-                thread_id = int(raw_thread)
+                thread_id = int(raw)
             except (ValueError, TypeError):
                 pass
 
-    group_chat_id = config.TELEGRAM_GROUP_CHAT_ID
-    if group_chat_id is None:
-        raw_group = os.environ.get("TELEGRAM_GROUP_CHAT_ID", "").strip()
-        if raw_group:
-            try:
-                group_chat_id = int(raw_group)
-            except (ValueError, TypeError):
-                pass
+    if chat_id is None:
+        logger.warning("TELEGRAM_CHANNEL_ID not set — skipping donation.")
+        return
 
     qr_path = DONATION_QR_IMAGE
+    kwargs: dict = {"chat_id": chat_id, "parse_mode": "HTML"}
+    if thread_id is not None:
+        kwargs["message_thread_id"] = thread_id
 
-    if channel_id is not None:
-        try:
-            if os.path.isfile(qr_path):
-                with open(qr_path, "rb") as f:
-                    await context.bot.send_photo(
-                        chat_id=channel_id,
-                        photo=f,
-                        caption=DONATION_TEXT,
-                        parse_mode="HTML",
-                    )
-            else:
-                await context.bot.send_message(
-                    chat_id=channel_id,
-                    text=DONATION_TEXT,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            logger.info("Donation message sent to channel %s", channel_id)
-        except Exception:
-            logger.exception("Failed to send donation message to channel %s", channel_id)
-
-    if group_chat_id is not None and group_chat_id != channel_id:
-        try:
-            await context.bot.send_message(
-                chat_id=group_chat_id,
-                text=DONATION_TEXT,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-            logger.info("Donation message sent to group chat %s", group_chat_id)
-        except Exception:
-            logger.exception("Failed to send donation message to group chat %s", group_chat_id)
+    try:
+        if os.path.isfile(qr_path):
+            with open(qr_path, "rb") as f:
+                await context.bot.send_photo(photo=f, caption=DONATION_TEXT, **kwargs)
+        else:
+            await context.bot.send_message(text=DONATION_TEXT, disable_web_page_preview=True, **kwargs)
+        logger.info("Donation message sent to chat %s topic %s", chat_id, thread_id)
+    except Exception:
+        logger.exception("Failed to send donation message to %s", chat_id)
 
 
 async def _reply(update: object, text: str) -> None:
