@@ -100,7 +100,7 @@ SUMMARY_SIM_WORD_LIMIT: int = 100
 # ---- AI ----
 GROQ_MODEL: str = "llama-3.3-70b-versatile"
 GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-GROQ_MAX_TOKENS: int = 1000
+GROQ_MAX_TOKENS: int = 2200
 
 # ---- Scheduling ----
 TIMEZONE = ZoneInfo("Asia/Phnom_Penh")
