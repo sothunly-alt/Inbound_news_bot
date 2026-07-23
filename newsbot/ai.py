@@ -126,8 +126,14 @@ def _sanitize_ai_data(data: dict) -> dict:
 
 
 def _has_khmer(text: str) -> bool:
-    """Check if a string contains Khmer script characters."""
-    return bool(_KHMER_RE.search(text))
+    """Check if a string is predominantly Khmer (at least 30% Khmer characters)."""
+    if not text.strip():
+        return False
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    khmer_count = sum(1 for c in letters if _KHMER_RE.match(c))
+    return khmer_count / len(letters) >= 0.3
 
 
 def _validate_khmer_fields(data: dict) -> tuple[bool, list[str]]:
@@ -160,10 +166,10 @@ def _validate_khmer_fields(data: dict) -> tuple[bool, list[str]]:
         km_val = data.get(km_key, [])
         eng_val = data.get(eng_key, [])
         if km_val:
-            has_khmer_in_list = any(_has_khmer(str(item)) for item in km_val if isinstance(item, str))
-            if not has_khmer_in_list:
+            khmer_items = sum(1 for item in km_val if isinstance(item, str) and _has_khmer(item))
+            if khmer_items == 0:
                 missing.append(km_key)
-                logger.warning("Khmer field '%s' list has no Khmer characters: %s", km_key, km_val)
+                logger.warning("Khmer field '%s' list has no Khmer content: %s", km_key, km_val)
         elif eng_val:
             missing.append(km_key)
             logger.warning("Khmer field '%s' list is missing (empty)", km_key)
