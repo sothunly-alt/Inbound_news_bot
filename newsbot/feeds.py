@@ -67,6 +67,18 @@ _IMG_SRC_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags, collapse whitespace, and decode common entities."""
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</(p|div|li|h[1-6])>", "\n", text, flags=re.IGNORECASE)
+    text = _TAG_RE.sub("", text)
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+    return re.sub(r"[ \t]+", " ", text).strip()
+
 
 def _format_entry_date(raw_entry: Any) -> str | None:
     """Extract and format the publication date from an RSS entry as 'Mon DD, YYYY'."""
@@ -254,10 +266,11 @@ def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = N
             if _is_title_duplicate(title, posted_titles):
                 logger.debug("Skipping duplicate title: %s", title)
                 continue
+            raw_summary = (entry.get("summary", "") or "")[:500]
             entries.append(Entry(
                 id=entry_id,
                 title=title,
-                summary=(entry.get("summary", "") or "")[:500],
+                summary=_strip_html(raw_summary),
                 link=entry.link,
                 source_name=source_name,
                 image_url=extract_image_url(entry),

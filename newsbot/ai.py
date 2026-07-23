@@ -37,6 +37,18 @@ _RETRY_BASE_DELAY: float = 1.0
 
 _REQUIRED_JSON_KEYS = ("urgency", "headline", "summary", "category")
 
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags, collapse whitespace, and decode common entities."""
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</(p|div|li|h[1-6])>", "\n", text, flags=re.IGNORECASE)
+    text = _TAG_RE.sub("", text)
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+    return re.sub(r"[ \t]+", " ", text).strip()
+
 
 def _html_escape(text: str) -> str:
     """HTML-escape text for Telegram (no quote escaping — Telegram doesn't need it)."""
@@ -89,6 +101,27 @@ def _validate_ai_data(data: dict) -> tuple[bool, str | None]:
             return False, f"Key '{km_key}' must be a list"
 
     return True, None
+
+
+def _sanitize_ai_data(data: dict) -> dict:
+    """Strip HTML tags from all string fields and list items in AI output."""
+    _STRING_KEYS = (
+        "headline", "headline_km", "summary", "summary_km",
+        "context", "context_km", "timeline", "timeline_km",
+        "market_impact", "market_impact_km", "tldr", "tldr_km",
+    )
+    _LIST_KEYS = (
+        "key_points", "key_points_km", "metrics", "metrics_km",
+        "what_to_do", "what_to_do_km", "who_affected", "who_affected_km",
+        "what_to_watch", "what_to_watch_km", "tags",
+    )
+    for key in _STRING_KEYS:
+        if key in data and isinstance(data[key], str):
+            data[key] = _strip_html(data[key])
+    for key in _LIST_KEYS:
+        if key in data and isinstance(data[key], list):
+            data[key] = [_strip_html(item) for item in data[key] if isinstance(item, str)]
+    return data
 
 
 def _md_bold_to_html(text: str) -> str:
@@ -377,7 +410,7 @@ def pick_image_url(cluster: list[Entry]) -> str | None:
 def _build_prompt(cluster: list[Entry], source_note: str) -> str:
     """Build the AI prompt for a cluster of related stories."""
     headlines = "\n".join(
-        f"- [{e.source_name}] {e.title}: {e.summary[:200]} (Published: {e.published_date or 'unknown date'})"
+        f"- [{e.source_name}] {e.title}: {_strip_html(e.summary)[:200]} (Published: {e.published_date or 'unknown date'})"
         for e in cluster[:5]
     )
     return f"""You are a tech news bot analyzing stories for a bilingual Telegram channel (Khmer + English).
@@ -434,6 +467,8 @@ Rules:
 - Never closely mirror any single article's wording
 - If sources disagree, note it in context
 - Khmer translations must sound natural — use proper Khmer tech vocabulary, not word-for-word translation
+- CRITICAL: ALL _km fields MUST contain Khmer text, never English. The Khmer section is for Cambodian readers.
+- CRITICAL: Do NOT include any HTML tags (no <div>, <p>, <a>, <img>, <br>, <span>, etc.) in any field — plain text only
 - Return ONLY valid JSON, no preamble, no markdown code fences
 {source_note}
 
@@ -486,6 +521,8 @@ def _process_ai_output(
         except ValueError:
             logger.warning("Failed to parse AI output as JSON, using fallback. Raw: %.200s", raw_output)
             data = _fallback_data(cluster, urgent)
+
+    data = _sanitize_ai_data(data)
 
     is_valid, reason = _validate_ai_data(data)
     if not is_valid:
