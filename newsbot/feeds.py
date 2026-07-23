@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import html
 import logging
 import re
 import threading
@@ -75,8 +76,12 @@ def _strip_html(text: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</(p|div|li|h[1-6])>", "\n", text, flags=re.IGNORECASE)
     text = _TAG_RE.sub("", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+    # Drop any dangling unclosed tag left by mid-attribute truncation
+    # (e.g. a summary sliced to 500 chars mid `<a href="...`).
+    text = re.sub(r"<[^>]*$", "", text)
+    # Some feeds double-encode entities (&amp;#x2019; -> &#x2019;), so
+    # unescape twice to fully resolve them.
+    text = html.unescape(html.unescape(text))
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
@@ -90,6 +95,40 @@ def _format_entry_date(raw_entry: Any) -> str | None:
         return dt.strftime("%b %d, %Y")
     except (TypeError, ValueError):
         return None
+
+
+# Scripts we expect in legitimate tech-news titles: Latin (English) and Khmer.
+# A title dominated by other scripts (Arabic/Persian, Cyrillic, etc.) is almost
+# certainly not on-topic content from our curated feeds — most likely spam
+# that slipped in via an open tag/aggregation feed.
+_NON_TARGET_SCRIPT_RE = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F"  # Arabic / Persian
+    r"\u0400-\u04FF"                # Cyrillic
+    r"\u0590-\u05FF]"               # Hebrew
+)
+
+# Common spam-bait patterns: long digit runs (phone numbers), hashtag
+# stuffing, repeated punctuation used to game keyword matching.
+_PHONE_NUMBER_RE = re.compile(r"\d{7,}")
+_HASHTAG_STUFFING_RE = re.compile(r"(#\S+.*){3,}")
+
+
+def _looks_like_spam(title: str) -> bool:
+    """Heuristic check to catch spam/off-topic content that slips past feed curation."""
+    if not title:
+        return True
+
+    non_target_chars = len(_NON_TARGET_SCRIPT_RE.findall(title))
+    if non_target_chars / max(len(title), 1) > 0.15:
+        return True
+
+    if _PHONE_NUMBER_RE.search(title):
+        return True
+
+    if _HASHTAG_STUFFING_RE.search(title):
+        return True
+
+    return False
 
 
 def _is_entry_too_old(raw_entry: Any, max_age_hours: int = MAX_ENTRY_AGE_HOURS) -> bool:
@@ -266,11 +305,14 @@ def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = N
             if _is_title_duplicate(title, posted_titles):
                 logger.debug("Skipping duplicate title: %s", title)
                 continue
-            raw_summary = (entry.get("summary", "") or "")[:500]
+            if _looks_like_spam(title):
+                logger.warning("Skipping suspected spam entry: %s", title[:100])
+                continue
+            raw_summary = _strip_html(entry.get("summary", "") or "")[:500]
             entries.append(Entry(
                 id=entry_id,
                 title=title,
-                summary=_strip_html(raw_summary),
+                summary=raw_summary,
                 link=entry.link,
                 source_name=source_name,
                 image_url=extract_image_url(entry),

@@ -60,14 +60,11 @@ RSS_FEEDS: list[str] = [
     "https://techstartups.com/feed/",
     # AI & ML
     "https://techcrunch.com/category/artificial-intelligence/feed/",
-    "https://medium.com/feed/tag/artificial-intelligence",
     # Cybersecurity
     "https://www.bleepingcomputer.com/feed/",
     "https://krebsonsecurity.com/feed/",
-    "https://medium.com/feed/tag/cybersecurity",
     # DeFi & Crypto
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "https://medium.com/feed/tag/cryptocurrency",
     # Hardware
     "https://www.tomshardware.com/feeds/all",
     # Regulation
@@ -80,10 +77,9 @@ RSS_FEEDS: list[str] = [
     "https://www.wired.com/feed/rss",
     "https://www.theguardian.com/technology/rss",
     "https://www.technologyreview.com/feed/",
-    "https://medium.com/feed/tag/technology",
+    # Curated Medium publications (editor-run, not open tag streams)
     "https://medium.com/feed/better-programming",
     "https://medium.com/feed/towards-data-science",
-    "https://medium.com/feed/tag/startups",
 ]
 MAX_ITEMS_PER_FEED: int = 5
 MAX_ENTRY_AGE_HOURS: int = 24

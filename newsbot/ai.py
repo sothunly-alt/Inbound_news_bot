@@ -37,6 +37,10 @@ _RETRY_BASE_DELAY: float = 1.0
 
 _REQUIRED_JSON_KEYS = ("urgency", "headline", "summary", "category")
 
+
+class ContentRejected(Exception):
+    """Raised when the AI flags a cluster as spam/advertising/non-news content."""
+
 _TAG_RE = re.compile(r"<[^>]+>")
 _KHMER_RE = re.compile(r"[\u1780-\u17FF]")
 
@@ -46,8 +50,8 @@ def _strip_html(text: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</(p|div|li|h[1-6])>", "\n", text, flags=re.IGNORECASE)
     text = _TAG_RE.sub("", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+    text = re.sub(r"<[^>]*$", "", text)  # dangling unclosed tag from truncation
+    text = html.unescape(html.unescape(text))  # handles double-encoded entities
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
@@ -467,6 +471,14 @@ def _build_prompt(cluster: list[Entry], source_note: str) -> str:
     )
     return f"""You are a tech news bot analyzing stories for a bilingual Telegram channel (Khmer + English).
 
+FIRST, check: is this legitimate tech/business/security/science news, or is it spam, an
+advertisement, an escort/contact-info listing, or otherwise unrelated non-news content that
+slipped into the feed?
+
+If it is NOT legitimate news, respond with ONLY this JSON and nothing else:
+{{"reject": true, "reason": "brief reason, e.g. 'spam/advertisement', 'not news content'"}}
+
+Otherwise, ignore the above and return a JSON object with these fields.
 Given the following stories about the same event, return a JSON object with these fields.
 ALL English fields must have a matching _km field with a natural Khmer translation (not robotic/machine-translated — write like a Cambodian tech journalist would).
 
@@ -609,6 +621,12 @@ def _process_ai_output(
         except ValueError:
             logger.warning("Failed to parse AI output as JSON, using fallback. Raw: %.200s", raw_output)
             data = _fallback_data(cluster, urgent)
+
+    if isinstance(data, dict) and data.get("reject"):
+        title = cluster[0].title if cluster else "?"
+        reason = data.get("reason", "unspecified")
+        logger.warning("AI rejected content as non-news (%s): %.100s", reason, title)
+        raise ContentRejected(reason)
 
     data = _sanitize_ai_data(data)
 
