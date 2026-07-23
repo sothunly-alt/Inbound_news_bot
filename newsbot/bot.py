@@ -14,8 +14,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
-from newsbot.ai import collect_links, pick_image_url, rewrite_with_ai, trim_for_caption
+from newsbot.ai import collect_links, pick_image_url, rewrite_compact, rewrite_with_ai, trim_for_caption
+from newsbot import config
 from newsbot.config import (
+    BATCH_MAX_STORIES,
+    BATCH_STORIES,
     DIGEST_MAX_STORIES,
     MAX_URGENT_POSTS_PER_RUN,
     TELEGRAM_CHANNEL_ID,
@@ -27,7 +30,9 @@ from newsbot.state import get_state
 
 __all__ = [
     "StoryPost",
+    "BatchedStory",
     "broadcast_stories",
+    "broadcast_batched",
     "fetch_and_post",
     "fetch_urgent_and_post",
 ]
@@ -46,6 +51,18 @@ class StoryPost:
     primary_source: str
     extra_urls: list[str] = field(default_factory=list)
     extra_sources: list[str] = field(default_factory=list)
+    image_url: str | None = None
+    entry_ids: set[str] = field(default_factory=set)
+    entry_titles: set[str] = field(default_factory=set)
+
+
+@dataclass
+class BatchedStory:
+    """One compact story inside a batched digest message."""
+
+    title: str
+    summary: str
+    source_line: str
     image_url: str | None = None
     entry_ids: set[str] = field(default_factory=set)
     entry_titles: set[str] = field(default_factory=set)
@@ -105,6 +122,10 @@ async def broadcast_stories(
     stories: list[StoryPost],
 ) -> set[str]:
     """Send each story separately. Returns entry IDs that succeeded at least once."""
+    if config.DISABLE_POSTING:
+        logger.info("Posting disabled via DISABLE_POSTING — skipping %d stories.", len(stories))
+        return set()
+
     targets: dict[int, int | None] = {}
 
     channel_id, thread_id_for_channel = _resolve_channel_target()
@@ -230,6 +251,146 @@ def _cluster_to_story(
     )
 
 
+def _source_line(links: list[tuple[str, str]], limit: int = 3) -> str:
+    parts = []
+    for url, name in links[:limit]:
+        parts.append(f'<a href="{url}">{name}</a>')
+    return " · ".join(parts)
+
+
+def _cluster_to_batched(cluster: list[Entry]) -> BatchedStory | None:
+    try:
+        summary = rewrite_compact(cluster)
+    except Exception:
+        title = cluster[0].title if cluster else "?"
+        logger.exception("Failed to generate compact summary for '%s'", title)
+        return None
+
+    links = collect_links(cluster)
+    if not links:
+        return None
+
+    title = cluster[0].title or "Untitled"
+
+    return BatchedStory(
+        title=title,
+        summary=summary,
+        source_line=_source_line(links),
+        image_url=pick_image_url(cluster),
+        entry_ids={e.id for e in cluster},
+        entry_titles={e.title for e in cluster},
+    )
+
+
+def _pick_batch_image(batched: list[BatchedStory]) -> str | None:
+    for s in batched:
+        if s.image_url:
+            return s.image_url
+    return None
+
+
+def _compile_batch_message(batched: list[BatchedStory]) -> str:
+    now = datetime.now(TIMEZONE).strftime("%b %d, %Y · %I:%M %p")
+    parts: list[str] = [f"<b>📰 Tech News — {now}</b>", ""]
+
+    for s in batched:
+        parts.append(f"▸ <b>{s.title}</b>")
+        parts.append(s.summary)
+        parts.append(s.source_line)
+        parts.append("")
+
+    return "\n".join(parts).strip()
+
+
+def _truncate_batch(text: str) -> list[str]:
+    _MAX = 4096
+    if len(text) <= _MAX:
+        return [text]
+
+    parts: list[str] = []
+    while text:
+        if len(text) <= _MAX:
+            parts.append(text)
+            break
+        cut = text.rfind("\n\n", 0, _MAX)
+        if cut == -1:
+            cut = text.rfind("\n", 0, _MAX)
+        if cut == -1:
+            cut = _MAX - 1
+        parts.append(text[:cut].rstrip())
+        text = text[cut:].strip()
+    return parts
+
+
+async def broadcast_batched(
+    context: ContextTypes.DEFAULT_TYPE,
+    batched: list[BatchedStory],
+) -> set[str]:
+    if config.DISABLE_POSTING:
+        logger.info("Posting disabled — skipping batch of %d stories.", len(batched))
+        return set()
+
+    channel_id, thread_id = _resolve_channel_target()
+    if channel_id is None:
+        logger.warning("No channel configured — nothing to send.")
+        return set()
+
+    message = _compile_batch_message(batched)
+    if not message:
+        return set()
+
+    batch_image = _pick_batch_image(batched)
+    succeeded_ids: set[str] = set()
+
+    try:
+        if batch_image:
+            caption = f"<b>📰 Tech News — {datetime.now(TIMEZONE).strftime('%b %d, %Y · %I:%M %p')}</b>"
+            try:
+                photo_msg = await context.bot.send_photo(
+                    chat_id=channel_id,
+                    photo=batch_image,
+                    caption=caption,
+                    parse_mode="HTML",
+                    message_thread_id=thread_id,
+                )
+            except Exception:
+                logger.warning("Batch photo failed — falling back to text-only")
+                photo_msg = None
+
+            segments = _truncate_batch(message)
+            for i, seg in enumerate(segments):
+                kwargs: dict = {
+                    "chat_id": channel_id,
+                    "text": seg,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                }
+                if thread_id is not None:
+                    kwargs["message_thread_id"] = thread_id
+                if i == 0 and photo_msg is not None:
+                    kwargs["reply_to_message_id"] = photo_msg.message_id
+                await context.bot.send_message(**kwargs)
+        else:
+            segments = _truncate_batch(message)
+            for seg in segments:
+                kwargs = {
+                    "chat_id": channel_id,
+                    "text": seg,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                }
+                if thread_id is not None:
+                    kwargs["message_thread_id"] = thread_id
+                await context.bot.send_message(**kwargs)
+
+        for s in batched:
+            succeeded_ids.update(s.entry_ids)
+    except Exception:
+        logger.exception("Failed to send batched digest")
+
+    return succeeded_ids
+
+
 def _prepare_entries(urgent: bool = False, header: str | None = None) -> list[StoryPost]:
     """Shared pipeline: collect, cluster, rewrite entries."""
     state = get_state()
@@ -277,7 +438,7 @@ async def _run_pipeline(
     *,
     urgent: bool = False,
 ) -> int:
-    """Shared async pipeline: prepare → broadcast → mark posted."""
+    """Shared pipeline: prepare → broadcast → mark posted (individual path)."""
     async with _pipeline_lock:
         stories = await asyncio.to_thread(_prepare_entries, urgent=urgent)
         if not stories:
@@ -297,8 +458,67 @@ async def _run_pipeline(
         return 0
 
 
+async def _run_batched_pipeline(context: ContextTypes.DEFAULT_TYPE) -> int:
+    async with _pipeline_lock:
+        state = get_state()
+        posted_ids = state.load_posted_ids()
+        posted_titles = state.load_posted_titles()
+        entries = collect_new_entries(posted_ids, posted_titles)
+        if not entries:
+            logger.info("No new entries for batched digest.")
+            return 0
+
+        all_clusters = _rank_clusters(cluster_entries(entries))
+        if not all_clusters:
+            return 0
+
+        # 1 story → individual path (full rewrite + keyboard)
+        if len(all_clusters) == 1:
+            stories = await asyncio.to_thread(_prepare_entries, urgent=False)
+            if not stories:
+                return 0
+            succeeded = await broadcast_stories(context, stories)
+            if succeeded:
+                _mark_posted(stories, succeeded)
+                return 1
+            return 0
+
+        # 2-4 stories → batch path
+        clusters = all_clusters[:BATCH_MAX_STORIES]
+        batched: list[BatchedStory] = []
+        for cluster in clusters:
+            entry = _cluster_to_batched(cluster)
+            if entry:
+                batched.append(entry)
+
+        if not batched:
+            logger.warning("All clusters failed compact rewrite — nothing to send.")
+            return 0
+
+        succeeded = await broadcast_batched(context, batched)
+        if succeeded:
+            _mark_posted_batched(batched, succeeded)
+            count = len(batched)
+            logger.info("Sent batched digest with %d stor(y/ies).", count)
+            return count
+
+        return 0
+
+
+def _mark_posted_batched(batched: list[BatchedStory], succeeded: set[str]) -> None:
+    state = get_state()
+    state.add_posted_ids(succeeded)
+    titles = set()
+    for s in batched:
+        if s.entry_ids & succeeded:
+            titles.update(normalize_title_key(t) for t in s.entry_titles)
+    state.add_posted_titles(titles)
+
+
 async def fetch_and_post(context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Fetch feeds, send each story separately (max DIGEST_MAX_STORIES)."""
+    """Fetch feeds. Batched path when BATCH_STORIES is on, else individual path."""
+    if BATCH_STORIES:
+        return await _run_batched_pipeline(context)
     return await _run_pipeline(context, urgent=False)
 
 

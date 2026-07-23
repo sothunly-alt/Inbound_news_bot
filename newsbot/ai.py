@@ -208,6 +208,42 @@ def _render_template(data: dict) -> str:
 render_template = _render_template
 
 
+_COMPACT_MAX_SENTENCES = 3
+
+
+def _build_compact_prompt(cluster: list[Entry]) -> str:
+    headlines = "\n".join(
+        f"- [{e.source_name}] {e.title}: {_strip_html(e.summary)[:200]}"
+        for e in cluster[:5]
+    )
+    return f"""You are a tech news bot writing a compact 2-3 sentence summary.
+
+Summarise the following tech news story in at most {_COMPACT_MAX_SENTENCES} sentences.
+Focus on: what happened, at a high level — who, what, why it matters.
+- Plain text only, no markdown, no HTML, no bold, no headlines, no bullet points.
+- Do not simply repeat article titles.
+- Report facts only — no opinions, no speculation.
+
+Stories covering the same event:
+{headlines}"""
+
+
+def rewrite_compact(cluster: list[Entry]) -> str:
+    prompt = _build_compact_prompt(cluster)
+    raw_output = _call_groq_with_retry(prompt)
+
+    if raw_output is None:
+        primary = cluster[0]
+        summary = _strip_html((primary.summary or "No summary available.")[:200])
+        return summary
+
+    output = raw_output.strip()
+    sentences = output.split(". ")
+    if len(sentences) > _COMPACT_MAX_SENTENCES:
+        output = ". ".join(sentences[:_COMPACT_MAX_SENTENCES]) + "."
+    return output
+
+
 def trim_for_caption(text: str, limit: int = _CAPTION_MAX) -> str:
     if len(text) <= limit:
         return text

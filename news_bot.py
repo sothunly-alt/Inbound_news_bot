@@ -36,8 +36,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, filters
 from newsbot.bot import fetch_and_post, fetch_urgent_and_post
 from newsbot import config
 from newsbot.config import (
-    DIGEST_SCHEDULE_HOUR_AM,
-    DIGEST_SCHEDULE_HOUR_PM,
+    BATCH_POLL_INTERVAL_MINUTES,
+    BATCH_STORIES,
     DONATION_QR_IMAGE,
     DONATION_SCHEDULE_HOUR,
     FETCH_COOLDOWN_SECONDS,
@@ -66,7 +66,7 @@ _fetch_last_run: dict[int, float] = {}
 
 
 async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fixed-schedule digest job — runs at 5am and 5pm, posts new stories found since last run."""
+    """Periodic digest job — runs every 30 min (or BATCH_POLL_INTERVAL_MINUTES), posts new stories found since last run."""
     await fetch_and_post(context)
 
 
@@ -226,15 +226,12 @@ def main() -> None:
     if app.job_queue is None:
         raise RuntimeError("job_queue must be available (install python-telegram-bot[job-queue])")
 
-    # Fixed digest schedule — regular stories post at 5am and 5pm only.
-    # Urgent stories still get their own separate hourly check below.
-    app.job_queue.run_daily(
+    # Digest schedule — every 30 min (or BATCH_POLL_INTERVAL_MINUTES).
+    # Urgent stories still get their own separate hourly check.
+    app.job_queue.run_repeating(
         poll_job,
-        time=dt.time(hour=DIGEST_SCHEDULE_HOUR_AM, minute=0, tzinfo=TIMEZONE),
-    )
-    app.job_queue.run_daily(
-        poll_job,
-        time=dt.time(hour=DIGEST_SCHEDULE_HOUR_PM, minute=0, tzinfo=TIMEZONE),
+        interval=BATCH_POLL_INTERVAL_MINUTES * 60,
+        first=60,
     )
     app.job_queue.run_repeating(
         urgent_job,
@@ -246,10 +243,11 @@ def main() -> None:
         time=dt.time(hour=DONATION_SCHEDULE_HOUR, minute=0, tzinfo=TIMEZONE),
     )
 
+    mode = "batched" if BATCH_STORIES else "individual"
     logger.info(
-        "Bot running. Digest at %02d:00 and %02d:00 (%s). Donation at %02d:00. Urgent checks every %ds. Use /fetch for on-demand.",
-        DIGEST_SCHEDULE_HOUR_AM,
-        DIGEST_SCHEDULE_HOUR_PM,
+        "Bot running. %s digest every %d min (%s). Donation at %02d:00. Urgent checks every %ds. Use /fetch for on-demand.",
+        mode.capitalize(),
+        BATCH_POLL_INTERVAL_MINUTES,
         TIMEZONE,
         DONATION_SCHEDULE_HOUR,
         URGENT_CHECK_INTERVAL_SECONDS,

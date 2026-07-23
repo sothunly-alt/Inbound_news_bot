@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -37,6 +38,7 @@ __all__ = [
     "URGENT_KEYWORDS",
     "URGENCY_LEVELS",
     "NEWS_CATEGORIES",
+    "DISABLE_POSTING",
     "POSTED_LOG",
     "SUBSCRIBERS_LOG",
     "FETCH_COOLDOWN_SECONDS",
@@ -63,20 +65,28 @@ RSS_FEEDS: list[str] = [
     # Cybersecurity
     "https://www.bleepingcomputer.com/feed/",
     "https://krebsonsecurity.com/feed/",
+    "https://www.darkreading.com/rss.xml",
+    "https://feeds.feedburner.com/TheHackersNews",
     # DeFi & Crypto
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
     # Hardware
     "https://www.tomshardware.com/feeds/all",
+    # Mobile
+    "https://9to5google.com/feed/",
+    "https://9to5mac.com/feed/",
+    "https://www.androidpolice.com/feed/",
     # Regulation
     "https://techpolicy.press/rss/feed.xml",
     # Science
     "https://www.sciencedaily.com/rss/top/technology.xml",
+    "https://www.nature.com/subjects/technology.rss",
     # General Tech
     "https://www.theverge.com/rss/index.xml",
     "https://feeds.arstechnica.com/arstechnica/index",
     "https://www.wired.com/feed/rss",
     "https://www.theguardian.com/technology/rss",
     "https://www.technologyreview.com/feed/",
+    "https://www.zdnet.com/news/rss.xml",
     # Curated Medium publications
     "https://medium.com/feed/better-programming",
     "https://medium.com/feed/towards-data-science",
@@ -99,15 +109,19 @@ RSS_FEEDS: list[str] = [
     "https://www.vox.com/rss/recode/index.xml",
     # Cloud & DevOps
     "https://thenewstack.io/feed/",
+    "https://cloudblog.withgoogle.com/rss/",
+    "https://www.docker.com/feed/",
     # Developer & Open Source
     "https://github.blog/feed/",
     "https://stackoverflow.blog/feed/",
+    "https://devblogs.microsoft.com/feed/",
     # Gaming
     "https://www.polygon.com/rss/index.xml",
     # Climate Tech
     "https://electrek.co/feed/",
     # Space
     "https://spacenews.com/feed/",
+    "https://www.space.com/feeds.xml",
     # Community & Discovery
     "https://hnrss.org/frontpage",
     "https://www.producthunt.com/feed",
@@ -119,7 +133,106 @@ RSS_FEEDS: list[str] = [
     # Developer
     "https://feed.infoq.com/",
     "https://dev.to/feed",
+    # Apple Ecosystem
+    "http://feeds.macrumors.com/MacRumors-Front",
+    "https://appleinsider.com/rss/news/",
+    "https://www.macworld.com/feed",
+    # Linux & Open Source
+    "https://www.phoronix.com/rss.php",
+    "https://www.linuxfoundation.org/feed/",
+    "https://blog.mozilla.org/feed/",
+    "https://www.eff.org/rss/updates.xml",
+    # Windows & Microsoft
+    "https://www.windowscentral.com/feed.xml",
+    "https://betanews.com/feed",
+    "https://www.neowin.net/feed/",
+    # Consumer Tech
+    "https://www.cnet.com/rss/news/",
+    "https://www.techradar.com/feeds.xml",
+    "https://www.digitaltrends.com/feed/",
+    "https://gizmodo.com/rss",
+    "https://mashable.com/rss",
+    "https://www.pcworld.com/feed",
+    "https://www.makeuseof.com/feed/",
+    "https://feeds.howtogeek.com/HowToGeek",
+    "https://www.slashgear.com/feed",
+    # Business Tech
+    "https://feeds.bloomberg.com/technology/news.rss",
+    "https://feeds.businessinsider.com/custom/all",
+    "https://www.fastcompany.com/rss",
+    # Enterprise IT
+    "https://www.theregister.com/headlines.atom",
+    "https://www.computerworld.com/feed",
+    "https://www.techrepublic.com/rssfeeds/",
+    "https://siliconangle.com/feed/",
+    # AI & ML
+    "https://openai.com/news/rss.xml",
+    "https://blog.google/technology/ai/rss/",
+    "https://ai.meta.com/blog/rss/",
+    "https://venturebeat.com/category/ai/feed/",
+    "https://www.unite.ai/feed/",
+    "https://www.kdnuggets.com/feed",
+    "https://developer.nvidia.com/blog/feed/",
+    "https://research.google/blog/rss/",
+    # Cybersecurity
+    "https://www.securityweek.com/feed/",
+    "https://www.helpnetsecurity.com/feed/",
+    "https://www.csoonline.com/feed",
+    "https://cyberscoop.com/feed/",
+    "https://blog.talosintelligence.com/rss/",
+    "https://www.schneier.com/feed/atom/",
+    "https://grahamcluley.com/feed/",
+    "https://www.scworld.com/feed",
+    # Cloud & DevOps
+    "https://aws.amazon.com/blogs/aws/feed/",
+    "https://azure.microsoft.com/blog/feed/",
+    "https://blog.cloudflare.com/rss/",
+    "https://www.hashicorp.com/feed.xml",
+    "https://kubernetes.io/feed.xml",
+    "https://www.cncf.io/blog/feed/",
+    # Mobile
+    "https://www.androidauthority.com/feed/",
+    "https://www.androidcentral.com/feed",
+    "https://www.gsmarena.com/rss-news-reviews.php",
+    "https://www.xda-developers.com/feed/",
+    # Science & Hardware
+    "https://phys.org/rss-feed/",
+    "https://www.livescience.com/feed",
+    "https://www.quantamagazine.org/feed/",
+    "https://semiengineering.com/feed/",
+    # Developer
+    "https://www.freecodecamp.org/news/rss/",
+    "https://www.smashingmagazine.com/feed/",
+    "https://hackernoon.com/feed",
+    # Regional & Global
+    "https://technode.com/feed/",
+    "https://www.siliconrepublic.com/feed",
+    "https://tech.eu/feed/",
+    "https://www.itnews.com.au/rss.xml",
+    "https://mobilesyrup.com/feed/",
+    # Startups & Business
+    "https://www.geekwire.com/feed/",
+    "https://www.saastr.com/feed/",
+    "https://a16z.com/feed/",
+    # Community & Discovery
+    "https://www.techmeme.com/feed.xml",
+    "https://slashdot.org/rss/slashdot.rss",
+    "https://www.techspot.com/feed/",
+    # Additional Tech News
+    "https://www.extremetech.com/feed",
+    "https://readwrite.com/feed/",
+    "https://fossbytes.com/feed/",
 ]
+
+# ---- Extra feeds (loaded from external file for bulk additions) ----
+_EXTRA_FEEDS_FILE = Path(__file__).parent / "extra_feeds.txt"
+if _EXTRA_FEEDS_FILE.exists():
+    with _EXTRA_FEEDS_FILE.open() as _fh:
+        for _line in _fh:
+            _line = _line.strip()
+            if _line and not _line.startswith("#"):
+                RSS_FEEDS.append(_line)
+
 MAX_ITEMS_PER_FEED: int = 3
 MAX_ENTRY_AGE_HOURS: int = 24
 FEED_TIMEOUT_SECONDS: int = 15
@@ -156,6 +269,15 @@ FETCH_COOLDOWN_SECONDS: int = 300  # 5 minutes
 # ---- Link caps ----
 LINK_CAP_URGENT: int = 3
 LINK_CAP_NORMAL: int = 5
+
+# ---- Batching ----
+BATCH_STORIES: bool = True
+BATCH_MAX_STORIES: int = 4
+BATCH_POLL_INTERVAL_MINUTES: int = 30
+URGENT_POST_IMMEDIATELY: bool = True
+
+# ---- Feature toggles ----
+DISABLE_POSTING: bool = True
 
 # ---- Urgency keywords ----
 URGENT_KEYWORDS: tuple[str, ...] = (
