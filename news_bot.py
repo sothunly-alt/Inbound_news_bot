@@ -41,8 +41,6 @@ from newsbot.config import (
     DONATION_QR_IMAGE,
     DONATION_SCHEDULE_HOUR,
     FETCH_COOLDOWN_SECONDS,
-    TELEGRAM_CHANNEL_ID,
-    TELEGRAM_THREAD_ID,
     TIMEZONE,
     URGENT_CHECK_INTERVAL_SECONDS,
     URGENT_FIRST_DELAY_SECONDS,
@@ -66,12 +64,12 @@ _fetch_last_run: dict[int, float] = {}
 
 
 async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Periodic digest job — runs every 30 min (or BATCH_POLL_INTERVAL_MINUTES), posts new stories found since last run."""
+    """Periodic digest job — runs every BATCH_POLL_INTERVAL_MINUTES, posts new stories found since last run."""
     await fetch_and_post(context)
 
 
 async def urgent_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Hourly urgent check — keyword matches not already posted."""
+    """Urgent check — keyword matches not already posted. Runs every URGENT_CHECK_INTERVAL_SECONDS."""
     await fetch_urgent_and_post(context)
 
 
@@ -214,11 +212,11 @@ def main() -> None:
     _add_command(app, "stop", stop_command)
     _add_command(app, "fetch", fetch_command)
 
-    if TELEGRAM_CHANNEL_ID is not None:
+    if config.TELEGRAM_CHANNEL_ID is not None:
         logger.info(
             "Channel target: %s%s",
-            TELEGRAM_CHANNEL_ID,
-            f" thread={TELEGRAM_THREAD_ID}" if TELEGRAM_THREAD_ID else "",
+            config.TELEGRAM_CHANNEL_ID,
+            f" thread={config.TELEGRAM_THREAD_ID}" if config.TELEGRAM_THREAD_ID else "",
         )
     else:
         logger.warning("TELEGRAM_CHANNEL_ID not set — only /start subscribers get posts.")

@@ -143,60 +143,40 @@ _CATEGORY_LABELS: dict[str, str] = {
 }
 
 
+_URGENCY_BADGES: dict[str, str] = {
+    "breaking": "🔴 CRITICAL",
+    "alert": "🟡 ALERT",
+    "analysis": "🔵 Analysis",
+    "market": "💰 Market",
+    "explainer": "📖 Explainer",
+}
+
+
 def _render_template(data: dict) -> str:
     """Render AI-structured data into a formatted Telegram HTML message."""
     headline = _html_escape(str(data.get("headline", "Untitled")))
     summary = _html_escape(str(data.get("summary", "")))
     key_points = data.get("key_points", [])
-    category_label = _CATEGORY_LABELS.get(data.get("category", ""), "")
-    source_name = _html_escape(str(data.get("source_name", "")))
     tldr = _html_escape(str(data.get("tldr", "")))
     urgency = data.get("urgency", "analysis")
 
-    sections: list[str] = []
-
-    if urgency == "breaking":
-        sections.append("<b>CRITICAL</b>")
-        sections.append(f"<b>{headline}</b>")
-        sections.append("")
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append(_bullet_list(key_points))
-
-    elif urgency == "alert":
-        sections.append("<b>ALERT</b>")
-        sections.append(f"<b>{headline}</b>")
-        sections.append("")
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append(_bullet_list(key_points))
-
-    elif urgency == "explainer":
-        sections.append("<b>EXPLAINER</b>")
-        sections.append(f"<b>{headline}</b>")
-        sections.append("")
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append(_bullet_list(key_points, limit=6))
-        if tldr:
-            sections.append("")
-            sections.append(f"<b>TL;DR:</b> {tldr}")
-
+    badge = _URGENCY_BADGES.get(urgency, "")
+    if badge:
+        sections: list[str] = [f"<b>{badge} — Inbound Reports</b>", ""]
     else:
-        sections.append(f"<b>{headline}</b>")
-        sections.append("")
-        sections.append(summary)
-        if key_points:
-            sections.append("")
-            sections.append(_bullet_list(key_points))
+        sections = []
 
-    parts = [p for p in [category_label, source_name] if p]
-    if parts:
+    sections.append(f"<b>{headline}</b>")
+    sections.append("")
+    sections.append(summary)
+
+    if key_points:
         sections.append("")
-        sections.append(" | ".join(parts))
+        sections.append(_bullet_list(key_points))
+
+    if tldr and urgency == "explainer":
+        sections.append("")
+        sections.append(f"<b>TL;DR:</b> {tldr}")
 
     text = "\n".join(sections)
     if len(text) > _MAX_TELEGRAM_LENGTH:

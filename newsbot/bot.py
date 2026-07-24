@@ -291,15 +291,22 @@ def _pick_batch_image(batched: list[BatchedStory]) -> str | None:
 
 def _compile_batch_message(batched: list[BatchedStory]) -> str:
     now = datetime.now(TIMEZONE).strftime("%b %d, %Y · %I:%M %p")
-    parts: list[str] = [f"<b>📰 Tech News — {now}</b>", ""]
+    separator = "━" * 20
+    parts: list[str] = [
+        f"📰 <b>Inbound Reports</b> — {now}",
+        separator,
+    ]
 
     for s in batched:
+        parts.append("")
         parts.append(f"▸ <b>{s.title}</b>")
         parts.append(s.summary)
-        parts.append(s.source_line)
-        parts.append("")
+        if s.source_line:
+            parts.append(s.source_line)
 
-    return "\n".join(parts).strip()
+    parts.append("")
+    parts.append(separator)
+    return "\n".join(parts)
 
 
 def _truncate_batch(text: str) -> list[str]:

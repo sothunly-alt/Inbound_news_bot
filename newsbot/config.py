@@ -1,9 +1,17 @@
-"""Configuration constants and environment variable loading."""
+"""Configuration constants and environment variable loading.
+
+Feed Tier System:
+  Tier 1 (this file): ~130 curated feeds — Telegram bot (fast, reliable, <15s)
+  Tier 2 (feeds_bulk.txt): ~4,400 feeds — website ingestion pipeline (future)
+  Tier 3 (APIs): GDELT, NewsData.io, Guardian, NYTimes — website ingestion (future)
+
+The Telegram bot only fetches Tier 1 feeds. Tier 2/3 are for the website
+at inboundreports.com and are not loaded by the bot.
+"""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -224,14 +232,10 @@ RSS_FEEDS: list[str] = [
     "https://fossbytes.com/feed/",
 ]
 
-# ---- Extra feeds (loaded from external file for bulk additions) ----
-_EXTRA_FEEDS_FILE = Path(__file__).parent / "extra_feeds.txt"
-if _EXTRA_FEEDS_FILE.exists():
-    with _EXTRA_FEEDS_FILE.open() as _fh:
-        for _line in _fh:
-            _line = _line.strip()
-            if _line and not _line.startswith("#"):
-                RSS_FEEDS.append(_line)
+# ---- Extra feeds (Tier 2 — NOT loaded by Telegram bot) ----
+# Bulk feeds live in feeds_bulk.txt for the website ingestion pipeline.
+# Do NOT load them here — the bot only uses the curated Tier 1 feeds above.
+# To use bulk feeds in a future website worker, load feeds_bulk.txt directly.
 
 MAX_ITEMS_PER_FEED: int = 3
 MAX_ENTRY_AGE_HOURS: int = 24
@@ -258,7 +262,7 @@ DIGEST_SCHEDULE_HOUR_AM: int = 5
 DIGEST_SCHEDULE_HOUR_PM: int = 17
 DONATION_SCHEDULE_HOUR: int = 22  # 10 PM
 DONATION_QR_IMAGE: str = os.environ.get("DONATION_QR_IMAGE", "qr_aba_news.jpg")
-URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 60  # once per hour
+URGENT_CHECK_INTERVAL_SECONDS: int = 60 * 30  # every 30 minutes
 URGENT_FIRST_DELAY_SECONDS: int = 60
 POLL_INTERVAL_SECONDS: int = int(os.environ.get("POLL_INTERVAL_SECONDS", "7200"))
 
@@ -272,12 +276,12 @@ LINK_CAP_NORMAL: int = 5
 
 # ---- Batching ----
 BATCH_STORIES: bool = True
-BATCH_MAX_STORIES: int = 4
-BATCH_POLL_INTERVAL_MINUTES: int = 30
+BATCH_MAX_STORIES: int = 6
+BATCH_POLL_INTERVAL_MINUTES: int = 15
 URGENT_POST_IMMEDIATELY: bool = True
 
 # ---- Feature toggles ----
-DISABLE_POSTING: bool = True
+DISABLE_POSTING: bool = False
 
 # ---- Urgency keywords ----
 URGENT_KEYWORDS: tuple[str, ...] = (

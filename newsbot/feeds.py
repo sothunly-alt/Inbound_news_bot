@@ -272,53 +272,60 @@ def collect_new_entries(posted_ids: set[str], posted_titles: set[str] | None = N
     entries: list[Entry] = []
     global_timeout = FEED_TIMEOUT_SECONDS + FEED_GLOBAL_TIMEOUT_EXTRA
 
-    for future in concurrent.futures.as_completed(futures, timeout=global_timeout):
-        feed_url = futures[future]
-        try:
-            feed = future.result(timeout=FEED_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
-            logger.warning("Feed %s timed out after %ds", feed_url, FEED_TIMEOUT_SECONDS)
-            continue
-        except httpx.TimeoutException:
-            logger.warning("Feed %s HTTP timeout after %ds", feed_url, FEED_TIMEOUT_SECONDS)
-            continue
-        except Exception:
-            logger.exception("Failed to fetch feed %s", feed_url)
-            continue
+    completed = 0
+    total = len(futures)
+    try:
+        for future in concurrent.futures.as_completed(futures, timeout=global_timeout):
+            feed_url = futures[future]
+            try:
+                feed = future.result(timeout=FEED_TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError:
+                logger.warning("Feed %s timed out after %ds", feed_url, FEED_TIMEOUT_SECONDS)
+                continue
+            except httpx.TimeoutException:
+                logger.warning("Feed %s HTTP timeout after %ds", feed_url, FEED_TIMEOUT_SECONDS)
+                continue
+            except Exception:
+                logger.exception("Failed to fetch feed %s", feed_url)
+                continue
 
-        if feed.bozo and not feed.entries:
-            logger.warning("Feed %s returned an error: %s", feed_url, feed.bozo_exception)
-            continue
+            completed += 1
+            if feed.bozo and not feed.entries:
+                logger.warning("Feed %s returned an error: %s", feed_url, feed.bozo_exception)
+                continue
 
-        source_name: str = feed.feed.get("title", feed_url)
-        count = 0
-        for entry in feed.entries:
-            if count >= MAX_ITEMS_PER_FEED:
-                break
-            entry_id: str = entry.get("id", entry.link)
-            if entry_id in posted_ids:
-                continue
-            if _is_entry_too_old(entry):
-                logger.debug("Skipping stale entry: %s", entry.get("title", ""))
-                continue
-            title = entry.get("title", "").strip()
-            if _is_title_duplicate(title, posted_titles):
-                logger.debug("Skipping duplicate title: %s", title)
-                continue
-            if _looks_like_spam(title):
-                logger.warning("Skipping suspected spam entry: %s", title[:100])
-                continue
-            raw_summary = _strip_html(entry.get("summary", "") or "")[:500]
-            entries.append(Entry(
-                id=entry_id,
-                title=title,
-                summary=raw_summary,
-                link=entry.link,
-                source_name=source_name,
-                image_url=extract_image_url(entry),
-                published_date=_format_entry_date(entry),
-            ))
-            count += 1
+            source_name: str = feed.feed.get("title", feed_url)
+            count = 0
+            for entry in feed.entries:
+                if count >= MAX_ITEMS_PER_FEED:
+                    break
+                entry_id: str = entry.get("id", entry.link)
+                if entry_id in posted_ids:
+                    continue
+                if _is_entry_too_old(entry):
+                    logger.debug("Skipping stale entry: %s", entry.get("title", ""))
+                    continue
+                title = entry.get("title", "").strip()
+                if _is_title_duplicate(title, posted_titles):
+                    logger.debug("Skipping duplicate title: %s", title)
+                    continue
+                if _looks_like_spam(title):
+                    logger.warning("Skipping suspected spam entry: %s", title[:100])
+                    continue
+                raw_summary = _strip_html(entry.get("summary", "") or "")[:500]
+                entries.append(Entry(
+                    id=entry_id,
+                    title=title,
+                    summary=raw_summary,
+                    link=entry.link,
+                    source_name=source_name,
+                    image_url=extract_image_url(entry),
+                    published_date=_format_entry_date(entry),
+                ))
+                count += 1
+    except TimeoutError:
+        logger.warning("Global feed timeout hit after %ds — %d/%d feeds completed, %d entries collected.",
+                        global_timeout, completed, total, len(entries))
 
     return entries
 
