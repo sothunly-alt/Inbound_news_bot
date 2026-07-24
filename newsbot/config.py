@@ -106,7 +106,7 @@ LINK_CAP_NORMAL: int = 5
 # ---- Batching ----
 BATCH_STORIES: bool = True
 BATCH_MAX_STORIES: int = 6
-BATCH_POLL_INTERVAL_MINUTES: int = 15
+BATCH_POLL_INTERVAL_MINUTES: int = 180
 URGENT_POST_IMMEDIATELY: bool = True
 
 # ---- Feature toggles ----
