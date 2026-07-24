@@ -8,10 +8,12 @@ Env vars required:
     NEWSDATA_API_KEY (optional)
     EXA_API_KEY (optional)
     FIRECRAWL_API_KEY (optional)
+    CURRENTS_API_KEY (optional)
 
 Sources:
     - GDELT (free, no key)
     - NewsData.io (free tier)
+    - Currents API (free, 600 req/day)
     - Lobste.rs (free, no key)
     - Hacker News / Algolia (free, no key)
     - arXiv (free, no key)
@@ -36,6 +38,7 @@ from workers.db import get_supabase
 # --- All source imports ---
 from workers.gdelt import fetch_all_gdelt
 from workers.newsdata import fetch_all_newsdata
+from workers.currents import fetch_all_currents
 from workers.lobsters import fetch_all_lobsters
 from workers.hackernews import fetch_all_hackernews
 from workers.arxiv import fetch_all_arxiv
@@ -122,7 +125,15 @@ def run() -> None:
     except Exception:
         logger.exception("NewsData.io failed")
 
-    # 3. Lobste.rs
+    # 3. Currents API
+    try:
+        currents = fetch_all_currents()
+        all_sources.extend(currents)
+        logger.info("Currents API: %d articles", len(currents))
+    except Exception:
+        logger.exception("Currents API failed")
+
+    # 4. Lobste.rs
     try:
         lobsters = fetch_all_lobsters()
         all_sources.extend(lobsters)
@@ -130,7 +141,7 @@ def run() -> None:
     except Exception:
         logger.exception("Lobste.rs failed")
 
-    # 4. Hacker News
+    # 5. Hacker News
     try:
         hn = fetch_all_hackernews()
         all_sources.extend(hn)
@@ -138,7 +149,7 @@ def run() -> None:
     except Exception:
         logger.exception("Hacker News failed")
 
-    # 5. arXiv
+    # 6. arXiv
     try:
         arxiv = fetch_all_arxiv()
         all_sources.extend(arxiv)
@@ -146,7 +157,7 @@ def run() -> None:
     except Exception:
         logger.exception("arXiv failed")
 
-    # 6. Semantic Scholar
+    # 7. Semantic Scholar
     try:
         ss = fetch_all_semantic_scholar()
         all_sources.extend(ss)
@@ -154,7 +165,7 @@ def run() -> None:
     except Exception:
         logger.exception("Semantic Scholar failed")
 
-    # 7. OpenAlex
+    # 8. OpenAlex
     try:
         openalex = fetch_all_openalex()
         all_sources.extend(openalex)
@@ -162,7 +173,7 @@ def run() -> None:
     except Exception:
         logger.exception("OpenAlex failed")
 
-    # 8. GitHub Trending
+    # 9. GitHub Trending
     try:
         github = fetch_all_github_trending()
         all_sources.extend(github)
@@ -170,7 +181,7 @@ def run() -> None:
     except Exception:
         logger.exception("GitHub Trending failed")
 
-    # 9. Hugging Face
+    # 10. Hugging Face
     try:
         hf = fetch_all_huggingface()
         all_sources.extend(hf)
@@ -180,7 +191,7 @@ def run() -> None:
 
     # --- Optional sources (graceful skip) ---
 
-    # 10. Exa.ai (neural search)
+    # 11. Exa.ai (neural search)
     if fetch_all_exa is not None:
         try:
             exa = fetch_all_exa()
@@ -189,10 +200,9 @@ def run() -> None:
         except Exception:
             logger.exception("Exa.ai failed")
 
-    # 11. Firecrawl (domain crawling)
+    # 12. Firecrawl (domain crawling)
     if crawl_and_extract is not None:
         try:
-            # Crawl a few tech blogs for deeper content
             crawl_urls = [
                 "https://blog.pragmaticengineer.com/",
                 "https://www.paulgraham.com/articles.html",
