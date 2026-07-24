@@ -10,6 +10,10 @@ redis>=5.0
 supabase>=2.11
 cohere>=5.13
 
+# API sources (all use httpx — no extra deps needed)
+# Lobsters, HN, arXiv, Semantic Scholar, OpenAlex, GitHub, HuggingFace
+# Exa.ai (optional), Firecrawl (optional)
+
 # Dev/test
 pytest>=8.0
 pytest-asyncio>=0.23

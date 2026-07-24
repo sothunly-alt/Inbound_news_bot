@@ -1,4 +1,4 @@
-"""API ingestion worker — pulls from GDELT + NewsData.io, writes to Supabase.
+"""API ingestion worker — pulls from all sources, writes to Supabase.
 
 Run: python -m workers.ingest_apis
 
@@ -6,6 +6,21 @@ Env vars required:
     SUPABASE_URL
     SUPABASE_SERVICE_ROLE_KEY
     NEWSDATA_API_KEY (optional)
+    EXA_API_KEY (optional)
+    FIRECRAWL_API_KEY (optional)
+
+Sources:
+    - GDELT (free, no key)
+    - NewsData.io (free tier)
+    - Lobste.rs (free, no key)
+    - Hacker News / Algolia (free, no key)
+    - arXiv (free, no key)
+    - Semantic Scholar (free, no key)
+    - OpenAlex (free, no key)
+    - GitHub Trending (free, no key)
+    - Hugging Face (free, no key)
+    - Exa.ai (optional, $10/mo free)
+    - Firecrawl (optional, 500 free/mo)
 """
 
 from __future__ import annotations
@@ -13,11 +28,32 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from typing import Any
 
 from workers.db import get_supabase
+
+# --- All source imports ---
 from workers.gdelt import fetch_all_gdelt
 from workers.newsdata import fetch_all_newsdata
+from workers.lobsters import fetch_all_lobsters
+from workers.hackernews import fetch_all_hackernews
+from workers.arxiv import fetch_all_arxiv
+from workers.semantic_scholar import fetch_all_semantic_scholar
+from workers.openalex import fetch_all_openalex
+from workers.github_trending import fetch_all_github_trending
+from workers.huggingface import fetch_all_huggingface
+
+# --- Optional sources (graceful skip if no API key) ---
+try:
+    from workers.exa import fetch_all_exa
+except ImportError:
+    fetch_all_exa = None  # type: ignore
+
+try:
+    from workers.firecrawl import crawl_and_extract
+except ImportError:
+    crawl_and_extract = None  # type: ignore
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -66,30 +102,120 @@ def _upsert_articles(articles: list[dict[str, Any]]) -> int:
 
 def run() -> None:
     logger.info("Starting API ingestion run...")
+    all_sources: list[dict[str, Any]] = []
+
+    # --- Core sources (always run) ---
 
     # 1. GDELT
-    logger.info("Fetching from GDELT...")
-    gdelt_articles = fetch_all_gdelt()
-    logger.info("GDELT returned %d unique articles", len(gdelt_articles))
+    try:
+        gdelt = fetch_all_gdelt()
+        all_sources.extend(gdelt)
+        logger.info("GDELT: %d articles", len(gdelt))
+    except Exception:
+        logger.exception("GDELT failed")
 
     # 2. NewsData.io
-    logger.info("Fetching from NewsData.io...")
-    newsdata_articles = fetch_all_newsdata()
-    logger.info("NewsData.io returned %d unique articles", len(newsdata_articles))
+    try:
+        newsdata = fetch_all_newsdata()
+        all_sources.extend(newsdata)
+        logger.info("NewsData.io: %d articles", len(newsdata))
+    except Exception:
+        logger.exception("NewsData.io failed")
 
-    # 3. Merge and dedup by URL
+    # 3. Lobste.rs
+    try:
+        lobsters = fetch_all_lobsters()
+        all_sources.extend(lobsters)
+        logger.info("Lobste.rs: %d articles", len(lobsters))
+    except Exception:
+        logger.exception("Lobste.rs failed")
+
+    # 4. Hacker News
+    try:
+        hn = fetch_all_hackernews()
+        all_sources.extend(hn)
+        logger.info("Hacker News: %d articles", len(hn))
+    except Exception:
+        logger.exception("Hacker News failed")
+
+    # 5. arXiv
+    try:
+        arxiv = fetch_all_arxiv()
+        all_sources.extend(arxiv)
+        logger.info("arXiv: %d papers", len(arxiv))
+    except Exception:
+        logger.exception("arXiv failed")
+
+    # 6. Semantic Scholar
+    try:
+        ss = fetch_all_semantic_scholar()
+        all_sources.extend(ss)
+        logger.info("Semantic Scholar: %d papers", len(ss))
+    except Exception:
+        logger.exception("Semantic Scholar failed")
+
+    # 7. OpenAlex
+    try:
+        openalex = fetch_all_openalex()
+        all_sources.extend(openalex)
+        logger.info("OpenAlex: %d works", len(openalex))
+    except Exception:
+        logger.exception("OpenAlex failed")
+
+    # 8. GitHub Trending
+    try:
+        github = fetch_all_github_trending()
+        all_sources.extend(github)
+        logger.info("GitHub Trending: %d repos", len(github))
+    except Exception:
+        logger.exception("GitHub Trending failed")
+
+    # 9. Hugging Face
+    try:
+        hf = fetch_all_huggingface()
+        all_sources.extend(hf)
+        logger.info("Hugging Face: %d items", len(hf))
+    except Exception:
+        logger.exception("Hugging Face failed")
+
+    # --- Optional sources (graceful skip) ---
+
+    # 10. Exa.ai (neural search)
+    if fetch_all_exa is not None:
+        try:
+            exa = fetch_all_exa()
+            all_sources.extend(exa)
+            logger.info("Exa.ai: %d results", len(exa))
+        except Exception:
+            logger.exception("Exa.ai failed")
+
+    # 11. Firecrawl (domain crawling)
+    if crawl_and_extract is not None:
+        try:
+            # Crawl a few tech blogs for deeper content
+            crawl_urls = [
+                "https://blog.pragmaticengineer.com/",
+                "https://www.paulgraham.com/articles.html",
+            ]
+            fc = crawl_and_extract(crawl_urls)
+            all_sources.extend(fc)
+            logger.info("Firecrawl: %d pages", len(fc))
+        except Exception:
+            logger.exception("Firecrawl failed")
+
+    # --- Dedup by URL ---
     seen: set[str] = set()
-    all_articles: list[dict[str, Any]] = []
-    for a in gdelt_articles + newsdata_articles:
+    unique_articles: list[dict[str, Any]] = []
+    for a in all_sources:
         if a["url"] not in seen:
             seen.add(a["url"])
-            all_articles.append(a)
+            unique_articles.append(a)
 
-    logger.info("Total unique articles: %d", len(all_articles))
+    logger.info("Total unique articles: %d (from %d sources)", len(unique_articles), len(all_sources))
 
-    # 4. Upsert to Supabase
-    if all_articles:
-        inserted = _upsert_articles(all_articles)
+    # --- Upsert to Supabase ---
+    if unique_articles:
+        inserted = _upsert_articles(unique_articles)
         logger.info("Inserted %d articles into Supabase", inserted)
     else:
         logger.warning("No articles to insert")

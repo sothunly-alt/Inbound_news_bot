@@ -146,7 +146,7 @@ def _is_entry_too_old(raw_entry: Any, max_age_hours: int = MAX_ENTRY_AGE_HOURS) 
 
 @dataclass
 class Entry:
-    """A single news item from an RSS feed."""
+    """A single news item from an RSS feed or API source."""
 
     id: str
     title: str
@@ -155,6 +155,11 @@ class Entry:
     source_name: str
     image_url: str | None = None
     published_date: str | None = None
+    # Optional fields for non-RSS sources (HN, arXiv, GitHub, etc.)
+    authors: list[str] | None = None
+    score: int | None = None
+    comments_count: int | None = None
+    tags: list[str] | None = None
 
 
 def extract_image_url(raw_entry: Any) -> str | None:

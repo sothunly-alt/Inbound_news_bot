@@ -230,6 +230,14 @@ RSS_FEEDS: list[str] = [
     "https://www.extremetech.com/feed",
     "https://readwrite.com/feed/",
     "https://fossbytes.com/feed/",
+    # Lobste.rs — strictly moderated, invite-only deep tech
+    "https://lobste.rs/rss",
+    # arXiv — academic preprints (AI, ML, security)
+    "http://arxiv.org/rss/cs.AI",
+    "http://arxiv.org/rss/cs.LG",
+    "http://arxiv.org/rss/cs.CR",
+    # Hacker News — high-score stories (via hnrss.org)
+    "https://hnrss.org/frontpage?points=100",
 ]
 
 # ---- Extra feeds (Tier 2 — NOT loaded by Telegram bot) ----
